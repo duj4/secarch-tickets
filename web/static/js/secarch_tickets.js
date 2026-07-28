@@ -315,7 +315,7 @@
     // api
     async function updateExpectedDate(ticketNumber, expectedDate) {
       try {
-        await fetch(`/api/secarch/tickets/${ticketNumber}`, {
+        await fetch(`/api/tickets/${ticketNumber}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ expected_date: expectedDate })
@@ -333,7 +333,7 @@
       if (!confirm(`Delete ${ticketNumber}?`)) return
 
       try {
-        await fetch(`/api/secarch/tickets/${ticketNumber}`, {
+        await fetch(`/api/tickets/${ticketNumber}`, {
           method: "DELETE"
         })
 
@@ -364,7 +364,7 @@
       btn.textContent = "Adding..."
 
       try {
-        const res = await fetch("/api/secarch/tickets", {
+        const res = await fetch("/api/tickets", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -537,7 +537,7 @@ ${Array.from({ length: 5 }).map(() => `
 `).join("")}`
 
       try {
-        const res = await fetch("/api/secarch/tickets")
+        const res = await fetch("/api/tickets")
         const resp = await res.json()
 
         allData = resp.tickets || []

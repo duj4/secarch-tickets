@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// CreateTicketRequest is the request body for POST /api/secarch/tickets.
+// CreateTicketRequest is the request body for POST /api/tickets.
 type CreateTicketRequest struct {
 	TicketNumber string `json:"ticket_number" binding:"required"`
 	ExpectedDate string `json:"expected_date" binding:"required"`

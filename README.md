@@ -5,11 +5,11 @@ Ticket details are refreshed from CMDB and stored in PostgreSQL.
 
 ## Routes
 
-- `GET /secarch/tickets`
-- `GET /api/secarch/tickets`
-- `POST /api/secarch/tickets`
-- `PUT /api/secarch/tickets/:ticket_number`
-- `DELETE /api/secarch/tickets/:ticket_number`
+- `GET /`
+- `GET /api/tickets`
+- `POST /api/tickets`
+- `PUT /api/tickets/:ticket_number`
+- `DELETE /api/tickets/:ticket_number`
 - `GET /healthz`
 
 ## Configuration

@@ -65,11 +65,8 @@ func Run() error {
 		return err
 	}
 
-	// Resolve the environment-specific configuration directory.
-	configDir, err := resolveConfigDir(env)
-	if err != nil {
-		return err
-	}
+	// Resolve the configuration directory.
+	configDir := resolveConfigDir()
 
 	// Build paths to the configuration files used by this process.
 	dbConfigPath := filepath.Join(configDir, "db.json")
@@ -180,19 +177,15 @@ func registerRoutes(r *gin.Engine, pool *pgxpool.Pool, cmdbClient *cmdb.Client) 
 	// Health check.
 	r.GET("/healthz", api.HealthHandler)
 
-	// SecArch tickets.
+	// SecArch tickets page.
 	r.GET("/", func(c *gin.Context) {
-		c.Redirect(http.StatusFound, "/secarch/tickets")
-	})
-
-	r.POST("/api/secarch/tickets", api.CreateTicketHandler(pool, cmdbClient))
-	r.GET("/api/secarch/tickets", api.ListTicketsHandler(pool, cmdbClient))
-	r.PUT("/api/secarch/tickets/:ticket_number", api.UpdateTicketHandler(pool, cmdbClient))
-	r.DELETE("/api/secarch/tickets/:ticket_number", api.DeleteTicketHandler(pool, cmdbClient))
-
-	r.GET("/secarch/tickets", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "secarch_tickets.html", nil)
 	})
+
+	r.POST("/api/tickets", api.CreateTicketHandler(pool, cmdbClient))
+	r.GET("/api/tickets", api.ListTicketsHandler(pool, cmdbClient))
+	r.PUT("/api/tickets/:ticket_number", api.UpdateTicketHandler(pool, cmdbClient))
+	r.DELETE("/api/tickets/:ticket_number", api.DeleteTicketHandler(pool, cmdbClient))
 
 }
 
@@ -218,15 +211,15 @@ func runTLSServer(r *gin.Engine, env, certFilePath, keyFilePath string) error {
 	return nil
 }
 
-// resolveConfigDir resolves the effective environment-specific config directory.
-func resolveConfigDir(env string) (string, error) {
+// resolveConfigDir resolves the effective configuration directory.
+func resolveConfigDir() string {
 	baseConfigDir := strings.TrimSpace(os.Getenv("APP_CONFIG_DIR"))
 	if baseConfigDir == "" {
 		baseConfigDir = defaultConfigDir
 		logger.Info("APP_CONFIG_DIR not set, using default", "path", baseConfigDir)
 	}
 
-	return baseConfigDir, nil
+	return baseConfigDir
 }
 
 // resolveTLSPaths returns the certificate paths used for server TLS and client mTLS.
