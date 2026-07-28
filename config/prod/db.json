@@ -1,0 +1,7 @@
+{
+  "db_server": "vshgms618.linux.ms.com.cn",
+  "db_port": 5051,
+  "db_name": "ai_info_db01",
+  "db_user": "itsm_jsm_prod",
+  "ssl_mode": "verify-full"
+}

@@ -1,0 +1,5 @@
+{
+  "ticket_api_url": "https://cmdb-api.ai.ms.com.cn/api/jira-issue/v1/ticket-queue",
+  "page_size": 100,
+  "http_timeout_seconds": 300
+}
