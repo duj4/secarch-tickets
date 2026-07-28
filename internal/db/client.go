@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,6 +38,14 @@ func LoadConfig(path string) (Config, error) {
 		cfg.ConnectTimeoutSeconds = 5
 	}
 
+	if strings.TrimSpace(cfg.TargetSessionAttrs) == "" {
+		cfg.TargetSessionAttrs = "read-write"
+	}
+
+	for i := range cfg.Servers {
+		cfg.Servers[i] = strings.TrimSpace(cfg.Servers[i])
+	}
+
 	// Validate the completed configuration.
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
@@ -47,8 +56,18 @@ func LoadConfig(path string) (Config, error) {
 
 // validate checks required fields and supported values in Config.
 func (cfg *Config) validate() error {
-	if err := requireString("db_server", cfg.Host); err != nil {
-		return err
+	if len(cfg.Servers) == 0 {
+		return fmt.Errorf("db_servers must contain at least one server")
+	}
+
+	for i, server := range cfg.Servers {
+		if err := requireString(fmt.Sprintf("db_servers[%d]", i), server); err != nil {
+			return err
+		}
+
+		if strings.Contains(server, ",") {
+			return fmt.Errorf("db_servers[%d] must contain exactly one server", i)
+		}
 	}
 
 	if cfg.Port != 5051 {
@@ -64,6 +83,10 @@ func (cfg *Config) validate() error {
 	}
 
 	if err := requireOneOfString("ssl_mode", cfg.SSLMode, "verify-full"); err != nil {
+		return err
+	}
+
+	if err := requireOneOfString("target_session_attrs", cfg.TargetSessionAttrs, "read-write"); err != nil {
 		return err
 	}
 
@@ -97,26 +120,56 @@ func (cfg *Config) ConnectTimeout() time.Duration {
 	return time.Duration(cfg.ConnectTimeoutSeconds) * time.Second
 }
 
-// NewPool creates and verifies a PostgreSQL connection pool.
-func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
-	connStr := fmt.Sprintf(
-		"host=%s port=%d user=%s dbname=%s sslmode=%s sslcert=%s sslkey=%s sslrootcert=%s",
-		cfg.Host,
-		cfg.Port,
-		cfg.User,
-		cfg.DBName,
-		cfg.SSLMode,
-		cfg.SSLCert,
-		cfg.SSLKey,
-		cfg.SSLRootCert,
-	)
+// StartupTimeout allows one connection timeout per configured server plus
+// a small allowance for DNS resolution and PostgreSQL session validation.
+func (cfg *Config) StartupTimeout() time.Duration {
+	return cfg.ConnectTimeout()*time.Duration(len(cfg.Servers)) + time.Second
+}
 
-	poolCfg, err := pgxpool.ParseConfig(connStr)
+// buildPoolConfig parses the PostgreSQL multi-host settings into a pgx pool configuration.
+func buildPoolConfig(cfg Config) (*pgxpool.Config, error) {
+	params := []string{
+		"host=" + quoteConnStringValue(strings.Join(cfg.Servers, ",")),
+		fmt.Sprintf("port=%d", cfg.Port),
+		"user=" + quoteConnStringValue(cfg.User),
+		"dbname=" + quoteConnStringValue(cfg.DBName),
+		"sslmode=" + quoteConnStringValue(cfg.SSLMode),
+		"target_session_attrs=" + quoteConnStringValue(cfg.TargetSessionAttrs),
+		fmt.Sprintf("connect_timeout=%d", cfg.ConnectTimeoutSeconds),
+	}
+
+	if cfg.SSLCert != "" {
+		params = append(params, "sslcert="+quoteConnStringValue(cfg.SSLCert))
+	}
+	if cfg.SSLKey != "" {
+		params = append(params, "sslkey="+quoteConnStringValue(cfg.SSLKey))
+	}
+	if cfg.SSLRootCert != "" {
+		params = append(params, "sslrootcert="+quoteConnStringValue(cfg.SSLRootCert))
+	}
+
+	poolCfg, err := pgxpool.ParseConfig(strings.Join(params, " "))
 	if err != nil {
 		return nil, fmt.Errorf("db: parse config: %w", err)
 	}
 
 	poolCfg.MaxConns = cfg.MaxConns
+	return poolCfg, nil
+}
+
+// quoteConnStringValue escapes a value for PostgreSQL's keyword/value connection string format.
+func quoteConnStringValue(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
+	return "'" + value + "'"
+}
+
+// NewPool creates and verifies a PostgreSQL connection pool.
+func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
+	poolCfg, err := buildPoolConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
@@ -124,11 +177,18 @@ func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	}
 
 	// Verify connectivity before returning the pool.
-	ctxPing, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout())
+	ctxPing, cancel := context.WithTimeout(ctx, cfg.StartupTimeout())
 	defer cancel()
 
 	if err := pool.Ping(ctxPing); err != nil {
-		return nil, fmt.Errorf("db: ping %s:%d/%s: %w", cfg.Host, cfg.Port, cfg.DBName, err)
+		pool.Close()
+		return nil, fmt.Errorf(
+			"db: ping servers=%s port=%d db=%s: %w",
+			strings.Join(cfg.Servers, ","),
+			cfg.Port,
+			cfg.DBName,
+			err,
+		)
 	}
 
 	return pool, nil

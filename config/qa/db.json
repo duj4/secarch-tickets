@@ -1,7 +1,11 @@
 {
-  "db_server": "vshgms224.linux.ms.com.cn",
+  "db_servers": [
+    "vshgms224.linux.ms.com.cn"
+  ],
   "db_port": 5051,
   "db_name": "ai_info_db01",
   "db_user": "itsm_jsm_qa",
-  "ssl_mode": "verify-full"
+  "ssl_mode": "verify-full",
+  "target_session_attrs": "read-write",
+  "connect_timeout_seconds": 5
 }
