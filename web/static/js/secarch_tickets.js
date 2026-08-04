@@ -96,6 +96,27 @@ function ticketSystems(ticket) {
   return ticket.cmdb_system_name || "—"
 }
 
+function ticketSystemsDisplay(ticket) {
+  const systems = Array.isArray(ticket.cmdb_system_name)
+    ? ticket.cmdb_system_name
+    : [ticket.cmdb_system_name]
+
+  const displaySystems = systems
+    .map(system => String(system || "").replace(/\s*\(.*$/, "").trim())
+    .filter(Boolean)
+
+  return displaySystems.join(", ") || "—"
+}
+
+function ticketSummaryDisplay(ticket) {
+  const summary = String(ticket.summary || "").trim()
+  const displaySummary = summary
+    .replace(/^SecDesign Case Review\s*-\s*Ad[\s-]*hoc\s*-\s*/i, "")
+    .trim()
+
+  return displaySummary || summary || "—"
+}
+
 function getFilteredTickets() {
   const search = document.getElementById("search").value.trim().toLowerCase()
 
@@ -164,33 +185,31 @@ function statusBadge(ticket) {
   return `<span class="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Open</span>`
 }
 
-function actionButton(action, ticketNumber, label, icon, extraClass = "") {
+function actionButton(action, ticketNumber, label, icon, colorClass) {
   return `
     <button type="button" data-action="${action}" data-ticket="${escapeHTML(ticketNumber)}"
-      class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 ${extraClass}"
+      class="flex h-8 w-8 items-center justify-center rounded-lg transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${colorClass}"
       aria-label="${escapeHTML(label)}" title="${escapeHTML(label)}">
       ${icon}
     </button>`
 }
 
-function updatesCell(ticket) {
+function updateActionButton(ticket) {
   const count = Number(ticket.update_count || 0)
   const ticketNumber = escapeHTML(ticket.ticket_number)
-  if (count === 0) {
-    return `
-      <button type="button" data-action="updates" data-ticket="${ticketNumber}"
-        class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-400 transition hover:bg-blue-50 hover:text-blue-600"
-        title="Add update">
-        ${icons.update}<span>Add</span>
-      </button>`
-  }
+  const latest = formatShortDateTime(ticket.latest_update_at)
+  const label = count === 0
+    ? "Add update"
+    : `${count} update${count === 1 ? "" : "s"}${latest ? ` · latest ${latest}` : ""}`
+  const badge = count > 0
+    ? `<span class="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-600 px-1 text-[10px] font-bold leading-none text-white">${count}</span>`
+    : ""
 
   return `
     <button type="button" data-action="updates" data-ticket="${ticketNumber}"
-      class="group inline-flex flex-col items-start rounded-lg px-2 py-1.5 text-left transition hover:bg-blue-50"
-      title="View ${count} update${count === 1 ? "" : "s"}">
-      <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600">${icons.update}${count}</span>
-      <span class="mt-0.5 text-[11px] text-slate-400 group-hover:text-blue-500">${escapeHTML(formatShortDateTime(ticket.latest_update_at))}</span>
+      class="relative flex h-8 w-8 items-center justify-center rounded-lg text-violet-600 transition hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
+      aria-label="${escapeHTML(label)}" title="${escapeHTML(label)}">
+      ${icons.update}${badge}
     </button>`
 }
 
@@ -218,7 +237,7 @@ function render() {
   if (pageData.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="9" class="px-4 py-16 text-center">
+        <td colspan="8" class="px-4 py-16 text-center">
           <div class="text-sm font-medium text-slate-600">No tickets found</div>
           <div class="mt-1 text-xs text-slate-400">Try adjusting your search or status filter.</div>
         </td>
@@ -229,31 +248,33 @@ function render() {
   tbody.innerHTML = pageData.map(ticket => {
     const ticketNumber = escapeHTML(ticket.ticket_number)
     const ticketURL = `https://itsm.ai.ms.com.cn/projects/ITSM/queues/issue/${encodeURIComponent(ticket.ticket_number)}`
+    const summaryDisplay = ticketSummaryDisplay(ticket)
+    const systemDisplay = ticketSystemsDisplay(ticket)
     const actions = [
-      actionButton("view", ticket.ticket_number, "View details", icons.view),
+      actionButton("view", ticket.ticket_number, "View details", icons.view, "text-blue-600 hover:bg-blue-50 hover:text-blue-700"),
+      updateActionButton(ticket),
       ticket.ticket_closed_at
         ? `<span class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300" title="Closed ticket cannot be edited">${icons.edit}</span>`
-        : actionButton("edit", ticket.ticket_number, "Edit expected date", icons.edit),
-      actionButton("delete", ticket.ticket_number, "Delete ticket", icons.delete, "hover:bg-red-50 hover:text-red-600")
+        : actionButton("edit", ticket.ticket_number, "Edit expected date", icons.edit, "text-amber-600 hover:bg-amber-50 hover:text-amber-700"),
+      actionButton("delete", ticket.ticket_number, "Delete ticket", icons.delete, "text-red-500 hover:bg-red-50 hover:text-red-600")
     ].join("")
 
     return `
       <tr data-id="${ticketNumber}" class="transition-colors hover:bg-slate-50">
-        <td class="px-4 py-3 align-top">
+        <td class="px-4 py-3 align-middle">
           <a href="${ticketURL}" target="_blank" rel="noopener noreferrer" class="font-semibold text-blue-600 hover:underline">${ticketNumber}</a>
         </td>
-        <td class="px-4 py-3 align-top">
-          <p class="line-clamp-2 leading-5 text-slate-700" title="${escapeHTML(ticket.summary)}">${escapeHTML(ticket.summary)}</p>
+        <td class="px-4 py-3 align-middle">
+          <p class="break-words leading-5 text-slate-700" title="${escapeHTML(ticket.summary)}">${escapeHTML(summaryDisplay)}</p>
         </td>
-        <td class="px-4 py-3 align-top">
-          <p class="line-clamp-2 leading-5 text-slate-600" title="${escapeHTML(ticketSystems(ticket))}">${escapeHTML(ticketSystems(ticket))}</p>
+        <td class="px-4 py-3 align-middle">
+          <p class="truncate whitespace-nowrap leading-5 text-slate-700" title="${escapeHTML(ticketSystems(ticket))}">${escapeHTML(systemDisplay)}</p>
         </td>
-        <td class="px-3 py-3 text-center align-top text-slate-600">${escapeHTML(ticket.reporter || "—")}</td>
-        <td class="px-3 py-3 text-center align-top text-slate-600">${escapeHTML(ticket.assignee || "—")}</td>
-        <td class="px-3 py-3 align-top">${expectedDateDisplay(ticket)}</td>
-        <td class="px-3 py-3 text-center align-top">${statusBadge(ticket)}</td>
-        <td class="px-3 py-2 align-top">${updatesCell(ticket)}</td>
-        <td class="px-3 py-2 align-top"><div class="flex items-center justify-center gap-1">${actions}</div></td>
+        <td class="px-3 py-3 text-center align-middle text-slate-700">${escapeHTML(ticket.reporter || "—")}</td>
+        <td class="px-3 py-3 text-center align-middle text-slate-700">${escapeHTML(ticket.assignee || "—")}</td>
+        <td class="px-3 py-3 align-middle">${expectedDateDisplay(ticket)}</td>
+        <td class="px-3 py-3 text-center align-middle">${statusBadge(ticket)}</td>
+        <td class="px-3 py-2 align-middle"><div class="flex items-center justify-center gap-1">${actions}</div></td>
       </tr>`
   }).join("")
 }
@@ -267,7 +288,6 @@ function renderSkeleton() {
     <td class="px-3 py-4"><div class="mx-auto h-4 w-16 animate-pulse rounded bg-slate-200"></div></td>
     <td class="px-3 py-4"><div class="h-4 w-20 animate-pulse rounded bg-slate-200"></div></td>
     <td class="px-3 py-4"><div class="mx-auto h-6 w-16 animate-pulse rounded-full bg-slate-200"></div></td>
-    <td class="px-3 py-4"><div class="h-8 w-20 animate-pulse rounded bg-slate-200"></div></td>
     <td class="px-3 py-4"><div class="mx-auto h-8 w-24 animate-pulse rounded bg-slate-200"></div></td>`
 
   document.getElementById("tbody").innerHTML = Array.from({ length: Math.min(pageSize, 5) }, () =>
@@ -310,7 +330,7 @@ async function loadTickets() {
     console.error(error)
     showToast(error.message || "Failed to load tickets", "error")
     if (allData.length === 0) {
-      document.getElementById("tbody").innerHTML = `<tr><td colspan="9" class="px-4 py-12 text-center text-sm text-red-600">Failed to load tickets</td></tr>`
+      document.getElementById("tbody").innerHTML = `<tr><td colspan="8" class="px-4 py-12 text-center text-sm text-red-600">Failed to load tickets</td></tr>`
     }
   } finally {
     setRefreshLoading(false)
