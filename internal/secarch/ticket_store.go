@@ -27,6 +27,8 @@ type StoredTicket struct {
 	ExpectedDate    time.Time  `json:"expected_date"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	UpdateCount     int64      `json:"update_count"`
+	LatestUpdateAt  *time.Time `json:"latest_update_at"`
 }
 
 // UpsertTicket inserts or updates a ticket in secarch_tickets.tickets.
@@ -101,6 +103,8 @@ func ListTickets(ctx context.Context, pool *pgxpool.Pool) ([]StoredTicket, error
 			&t.ExpectedDate,
 			&t.CreatedAt,
 			&t.UpdatedAt,
+			&t.UpdateCount,
+			&t.LatestUpdateAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan ticket row: %w", err)
 		}

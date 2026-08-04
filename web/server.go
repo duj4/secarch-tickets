@@ -186,6 +186,8 @@ func registerRoutes(r *gin.Engine, pool *pgxpool.Pool, cmdbClient *cmdb.Client) 
 	r.GET("/api/tickets", api.ListTicketsHandler(pool, cmdbClient))
 	r.PUT("/api/tickets/:ticket_number", api.UpdateTicketHandler(pool, cmdbClient))
 	r.DELETE("/api/tickets/:ticket_number", api.DeleteTicketHandler(pool, cmdbClient))
+	r.GET("/api/tickets/:ticket_number/updates", api.ListTicketUpdatesHandler(pool))
+	r.POST("/api/tickets/:ticket_number/updates", api.CreateTicketUpdateHandler(pool))
 }
 
 // runTLSServer starts the Gin HTTPS server.

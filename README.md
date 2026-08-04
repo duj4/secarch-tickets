@@ -10,6 +10,8 @@ Ticket details are refreshed from CMDB and stored in PostgreSQL.
 - `POST /api/tickets`
 - `PUT /api/tickets/:ticket_number`
 - `DELETE /api/tickets/:ticket_number`
+- `GET /api/tickets/:ticket_number/updates`
+- `POST /api/tickets/:ticket_number/updates`
 - `GET /healthz`
 
 ## Configuration
@@ -26,7 +28,8 @@ order and accepts only a writable PostgreSQL session, allowing new pool
 connections to follow a primary/standby failover.
 
 The service stores tickets in `secarch_tickets.tickets` within the existing
-`ai_info_db01` PostgreSQL database.
+`ai_info_db01` PostgreSQL database. Local progress notes are stored separately
+in `secarch_tickets.ticket_updates` and are never written back to ITSM.
 
 ## Build
 

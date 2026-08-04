@@ -1,18 +1,28 @@
 -- sql/list_secarch_tickets.sql
 
 SELECT
-    id,
-    ticket_number,
-    summary,
-    reporter,
-    assignee,
-    cmdb_system_name,
-    ticket_created_at,
-    ticket_closed_at,
-    expected_date,
-    created_at,
-    updated_at
-FROM secarch_tickets.tickets
+    t.id,
+    t.ticket_number,
+    t.summary,
+    t.reporter,
+    t.assignee,
+    t.cmdb_system_name,
+    t.ticket_created_at,
+    t.ticket_closed_at,
+    t.expected_date,
+    t.created_at,
+    t.updated_at,
+    COALESCE(u.update_count, 0),
+    u.latest_update_at
+FROM secarch_tickets.tickets AS t
+LEFT JOIN (
+    SELECT
+        ticket_id,
+        COUNT(*) AS update_count,
+        MAX(created_at) AS latest_update_at
+    FROM secarch_tickets.ticket_updates
+    GROUP BY ticket_id
+) AS u ON u.ticket_id = t.id
 ORDER BY
-    expected_date ASC NULLS LAST,
-    updated_at ASC
+    t.expected_date ASC NULLS LAST,
+    t.updated_at ASC

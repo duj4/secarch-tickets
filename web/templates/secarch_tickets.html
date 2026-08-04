@@ -3,193 +3,302 @@
 
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SecArch Tickets</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js"></script>
 </head>
 
-<body class="bg-gray-100 p-6">
-  <div class="max-w-7xl mx-auto">
-    <!-- Title -->
-    <h1 class="text-2xl font-bold text-center mb-6">
-      SecArch Tickets
-    </h1>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+  <main class="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+    <header class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">SecArch Tickets</h1>
+        <p class="mt-1 text-sm text-slate-500">
+          <span id="totalCount">0</span> tickets
+          <span class="mx-1 text-slate-300">•</span>
+          <span id="openCount">0</span> open
+        </p>
+      </div>
 
-    <!-- Controls -->
-    <div class="bg-white p-4 rounded-xl shadow mb-4">
-      <div class="flex flex-wrap items-center justify-between gap-4">
+      <div class="flex flex-wrap items-center gap-3">
+        <span id="lastRefreshed" class="text-xs text-slate-400">Not refreshed yet</span>
+        <button id="refreshBtn" type="button"
+          class="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60">
+          <svg id="refreshIcon" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" aria-hidden="true">
+            <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+            <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+          </svg>
+          <span id="refreshLabel">Refresh</span>
+        </button>
+        <button id="openAddModalBtn" type="button"
+          class="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Add Ticket
+        </button>
+      </div>
+    </header>
 
-        <!-- Left: Search / PageSize / Status / Refresh -->
-        <div class="flex items-center gap-3">
+    <section class="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Ticket filters">
+      <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div class="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+          <label class="relative block min-w-0 flex-1 xl:max-w-xl">
+            <span class="sr-only">Search tickets</span>
+            <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input id="search" type="search" placeholder="Search ticket, summary, system, or owner..."
+              class="h-10 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+          </label>
 
-          <input id="search" placeholder="Search ticket..." class="border px-3 py-2 rounded-full w-64">
+          <div class="inline-flex h-10 rounded-lg bg-slate-100 p-1" role="group" aria-label="Filter by status">
+            <button type="button" data-status-filter="all"
+              class="status-filter rounded-md bg-white px-3 text-sm font-medium text-slate-900 shadow-sm">All</button>
+            <button type="button" data-status-filter="open"
+              class="status-filter rounded-md px-3 text-sm font-medium text-slate-500 hover:text-slate-900">Open</button>
+            <button type="button" data-status-filter="closed"
+              class="status-filter rounded-md px-3 text-sm font-medium text-slate-500 hover:text-slate-900">Closed</button>
+          </div>
+        </div>
 
-          <select id="pageSize" class="border px-3 py-2 rounded-full">
-            <option value="5">5</option>
-            <option value="10" selected>10</option>
-            <option value="20">20</option>
-          </select>
-
-          <select id="statusFilter" class="border px-3 py-2 rounded-full">
-            <option value="all" selected>All Status</option>
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-          </select>
-
-          <button onclick="loadTickets()" class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600">
-            Refresh
+        <div class="relative self-start xl:self-auto">
+          <button id="exportToggle" type="button"
+            class="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              aria-hidden="true">
+              <path d="M12 3v12m0 0 4-4m-4 4-4-4" />
+              <path d="M5 19h14" />
+            </svg>
+            Export XLSX
           </button>
-        </div>
 
-        <!-- Right: Add + Export -->
-        <div class="flex items-center gap-4">
-
-          <!-- Add -->
-          <div class="flex items-center gap-3">
-            <input id="newTicket" placeholder="ITSM-12345" class="border px-3 py-2 rounded-full w-40">
-
-            <input id="newExpectedDate" type="date" class="border px-3 py-2 rounded-full">
-
-            <button id="addBtn" onclick="addTicket()"
-              class="bg-green-500 text-white px-4 py-2 rounded-full hover:bg-green-600">
-              Add
-            </button>
-          </div>
-
-          <!-- Export -->
-          <div class="relative">
-
-            <!-- 按钮 -->
-            <button onclick="toggleExport()" class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600">
-              Export CSV
-            </button>
-
-            <!-- Panel -->
-            <div id="exportPanel"
-              class="hidden absolute right-0 mt-2 bg-white shadow-lg rounded-xl p-4 w-auto min-w-[340px] max-w-[380px] z-50">
-
-              <!-- Quick -->
-              <div class="flex justify-center gap-3 mb-3">
-                <button onclick="quickExport(30)" class="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm">
-                  Last 30 days
-                </button>
-                <button onclick="quickExport(180)" class="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm">
-                  Last 180 days
-                </button>
-                <button onclick="quickExport(365)" class="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm">
-                  Last 365 days
-                </button>
-              </div>
-
-              <!-- Divider -->
-              <div class="border-t my-2"></div>
-
-              <!-- Date range -->
-              <div class="flex items-center gap-2 w-full">
-                <input id="exportStart" type="date" class="border px-3 py-2 rounded flex-1 min-w-[150px]">
-
-                <span class="text-sm text-gray-500">to</span>
-
-                <input id="exportEnd" type="date" class="border px-3 py-2 rounded flex-1 min-w-[150px]">
-              </div>
-
-              <!-- Button -->
-              <button onclick="confirmExport()"
-                class="mt-3 w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600">
-                Export
-              </button>
-
+          <div id="exportPanel"
+            class="absolute right-0 z-40 mt-2 hidden w-[min(380px,calc(100vw-2rem))] rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+            <p class="mb-3 text-sm font-semibold text-slate-900">Export closed tickets</p>
+            <div class="mb-3 grid grid-cols-3 gap-2">
+              <button type="button" data-export-days="30"
+                class="rounded-lg bg-slate-100 px-2 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200">30 days</button>
+              <button type="button" data-export-days="180"
+                class="rounded-lg bg-slate-100 px-2 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200">180 days</button>
+              <button type="button" data-export-days="365"
+                class="rounded-lg bg-slate-100 px-2 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200">365 days</button>
             </div>
+            <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-t border-slate-100 pt-3">
+              <label>
+                <span class="sr-only">Export start date</span>
+                <input id="exportStart" type="date"
+                  class="h-10 w-full rounded-lg border border-slate-300 px-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+              </label>
+              <span class="text-xs text-slate-400">to</span>
+              <label>
+                <span class="sr-only">Export end date</span>
+                <input id="exportEnd" type="date"
+                  class="h-10 w-full rounded-lg border border-slate-300 px-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+              </label>
+            </div>
+            <button id="exportConfirm" type="button"
+              class="mt-3 h-10 w-full rounded-lg bg-blue-600 text-sm font-semibold text-white hover:bg-blue-700">Export</button>
           </div>
-
         </div>
       </div>
+    </section>
+
+    <section class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-label="Tickets">
+      <div class="overflow-x-auto">
+        <table class="min-w-[1320px] w-full table-fixed text-sm">
+          <thead class="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th class="w-[130px] px-4 py-3 text-left" data-sort="ticket_number">
+                <button type="button" class="inline-flex items-center gap-1 font-semibold hover:text-blue-600">
+                  Ticket <span id="sort-ticket_number"></span>
+                </button>
+              </th>
+              <th class="w-[330px] px-4 py-3 text-left font-semibold">Summary</th>
+              <th class="w-[230px] px-4 py-3 text-left" data-sort="cmdb_system_name">
+                <button type="button" class="inline-flex items-center gap-1 font-semibold hover:text-blue-600">
+                  System <span id="sort-cmdb_system_name"></span>
+                </button>
+              </th>
+              <th class="w-[115px] px-3 py-3 text-center" data-sort="reporter">
+                <button type="button" class="inline-flex items-center gap-1 font-semibold hover:text-blue-600">
+                  Reporter <span id="sort-reporter"></span>
+                </button>
+              </th>
+              <th class="w-[115px] px-3 py-3 text-center" data-sort="assignee">
+                <button type="button" class="inline-flex items-center gap-1 font-semibold hover:text-blue-600">
+                  Assignee <span id="sort-assignee"></span>
+                </button>
+              </th>
+              <th class="w-[125px] px-3 py-3 text-left" data-sort="expected_date">
+                <button type="button" class="inline-flex items-center gap-1 font-semibold hover:text-blue-600">
+                  Expected <span id="sort-expected_date"></span>
+                </button>
+              </th>
+              <th class="w-[95px] px-3 py-3 text-center font-semibold">Status</th>
+              <th class="w-[130px] px-3 py-3 text-left font-semibold">Updates</th>
+              <th class="w-[115px] px-3 py-3 text-center font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tbody" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+
+      <footer class="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <p id="pageInfo" class="text-sm text-slate-500">Showing 0 tickets</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="flex items-center gap-2 text-sm text-slate-500">
+            Rows
+            <select id="pageSize"
+              class="h-9 rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+            </select>
+          </label>
+          <button id="prevBtn" type="button"
+            class="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Prev</button>
+          <button id="nextBtn" type="button"
+            class="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Next</button>
+        </div>
+      </footer>
+    </section>
+  </main>
+
+  <!-- Add ticket modal -->
+  <div id="addModal" data-modal
+    class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[1px]" role="dialog"
+    aria-modal="true" aria-labelledby="addModalTitle">
+    <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+      <div class="mb-5 flex items-start justify-between">
+        <div>
+          <h2 id="addModalTitle" class="text-lg font-semibold">Add Ticket</h2>
+          <p class="mt-1 text-sm text-slate-500">Track a SecArch ticket in this service.</p>
+        </div>
+        <button type="button" data-close-modal="addModal"
+          class="flex h-9 w-9 items-center justify-center rounded-lg text-2xl leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          aria-label="Close add ticket dialog">×</button>
+      </div>
+
+      <form id="addTicketForm" class="space-y-4">
+        <label class="block">
+          <span class="mb-1.5 block text-sm font-medium text-slate-700">Ticket Number</span>
+          <input id="newTicket" type="text" placeholder="ITSM-12345" autocomplete="off"
+            class="h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+        </label>
+        <label class="block">
+          <span class="mb-1.5 block text-sm font-medium text-slate-700">Expected Date</span>
+          <input id="newExpectedDate" type="date"
+            class="h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+        </label>
+        <p id="addError" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"></p>
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" data-close-modal="addModal"
+            class="h-10 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button id="addSubmitBtn" type="submit"
+            class="h-10 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Add Ticket</button>
+        </div>
+      </form>
     </div>
+  </div>
 
-    <!-- Table -->
-    <div class="bg-white rounded-xl shadow overflow-hidden">
-      <table class="min-w-full text-sm">
+  <!-- Ticket details and updates modal -->
+  <div id="detailModal" data-modal
+    class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[1px]" role="dialog"
+    aria-modal="true" aria-labelledby="detailModalTitle">
+    <div class="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div class="flex items-start justify-between border-b border-slate-200 px-6 py-5">
+        <div>
+          <div class="flex flex-wrap items-center gap-2">
+            <a id="detailTicketLink" href="#" target="_blank" rel="noopener noreferrer"
+              class="text-lg font-semibold text-blue-600 hover:underline"></a>
+            <span id="detailStatus" class="rounded-full px-2.5 py-1 text-xs font-semibold"></span>
+          </div>
+          <p id="detailModalTitle" class="mt-1 text-sm text-slate-500">Ticket details and local updates</p>
+        </div>
+        <button type="button" data-close-modal="detailModal"
+          class="flex h-9 w-9 items-center justify-center rounded-lg text-2xl leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          aria-label="Close ticket details">×</button>
+      </div>
 
-        <thead class="bg-gray-50 text-gray-600 text-xs uppercase sticky top-0 z-10">
-          <tr>
-            <th class="px-4 py-3 cursor-pointer hover:text-blue-600" onclick="sortBy('ticket_number')">
-              <div class="flex items-center justify-center gap-1 whitespace-nowrap">
-                Ticket <span id="sort-ticket_number"></span>
-              </div>
-            </th>
-            <th class="px-4 py-3">
-              <div class="flex items-center justify-center gap-1 whitespace-nowrap">
-                Summary
-              </div>
-            </th>
-            <th class="px-4 py-3 cursor-pointer hover:text-blue-600" onclick="sortBy('cmdb_system_name')">
-              <div class="flex items-center justify-center gap-1 whitespace-nowrap">
-                System <span id="sort-cmdb_system_name"></span>
-              </div>
-            </th>
-            <th class="px-4 py-3 cursor-pointer hover:text-blue-600" onclick="sortBy('reporter')">
-              <div class="flex items-center justify-center gap-1 whitespace-nowrap">
-                Reporter <span id="sort-reporter"></span>
-              </div>
-            </th>
-            <th class="px-4 py-3 cursor-pointer hover:text-blue-600" onclick="sortBy('assignee')">
-              <div class="flex items-center justify-center gap-1 whitespace-nowrap">
-                Assignee <span id="sort-assignee"></span>
-              </div>
-            </th>
-            <th class="px-4 py-3 cursor-pointer hover:text-blue-600" onclick="sortBy('expected_date')">
-              <div class="flex items-center justify-center gap-1 whitespace-nowrap">
-                Expected <span id="sort-expected_date"></span>
-              </div>
-            </th>
-            <th class="px-4 py-3">
-              <div class="flex items-center justify-center gap-1 whitespace-nowrap">
-                Status
-              </div>
-            </th>
-            <th class="px-4 py-3">
-              Action
-            </th>
-          </tr>
-        </thead>
+      <div class="overflow-y-auto px-6 py-5">
+        <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Ticket metadata">
+          <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Expected</p><p id="detailExpected" class="mt-1 text-sm font-medium"></p></div>
+          <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Reporter</p><p id="detailReporter" class="mt-1 text-sm"></p></div>
+          <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Assignee</p><p id="detailAssignee" class="mt-1 text-sm"></p></div>
+          <div class="sm:col-span-2 lg:col-span-3"><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">System</p><p id="detailSystem" class="mt-1 text-sm"></p></div>
+          <div id="detailClosedRow" class="hidden"><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Closed At</p><p id="detailClosedAt" class="mt-1 text-sm"></p></div>
+        </section>
 
-        <tbody id="tbody"></tbody>
+        <section class="mt-5 rounded-xl bg-slate-50 p-4">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Summary</h3>
+          <p id="detailSummary" class="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700"></p>
+        </section>
 
-      </table>
-    </div>
+        <section id="updatesSection" class="mt-6 border-t border-slate-200 pt-5" aria-labelledby="updatesTitle">
+          <div class="mb-4 flex items-center justify-between">
+            <h3 id="updatesTitle" class="font-semibold">Updates</h3>
+            <span id="updatesMeta" class="text-xs text-slate-400"></span>
+          </div>
+          <div id="updatesList" class="space-y-3"></div>
 
-    <!-- Pagination -->
-    <div class="flex justify-between items-center mt-4 text-sm">
-      <div id="pageInfo"></div>
-
-      <div class="flex gap-2">
-        <button id="prevBtn" onclick="prevPage()" class="border px-3 py-1 rounded">Prev</button>
-        <button id="nextBtn" onclick="nextPage()" class="border px-3 py-1 rounded">Next</button>
+          <form id="updateForm" class="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <label for="updateContent" class="mb-2 block text-sm font-medium text-slate-700">Add a local update</label>
+            <textarea id="updateContent" maxlength="500" rows="3"
+              placeholder="Write a short progress update. This stays in SecArch Tickets and is not sent back to ITSM."
+              class="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"></textarea>
+            <div class="mt-2 flex items-center justify-between gap-3">
+              <div>
+                <p id="updateError" class="hidden text-sm text-red-600"></p>
+                <span id="updateCounter" class="text-xs text-slate-400">0 / 500</span>
+              </div>
+              <button id="updateSubmitBtn" type="submit"
+                class="h-9 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Add Update</button>
+            </div>
+          </form>
+        </section>
       </div>
     </div>
-
   </div>
 
-  <!-- Modal for View Ticket -->
-  <div id="modal" class="fixed inset-0 bg-black bg-opacity-40 hidden items-center justify-center z-50">
-    <div class="bg-white rounded-xl shadow-xl w-[500px] p-6 relative">
-
-      <h2 class="text-lg font-semibold mb-4">Ticket Details</h2>
-
-      <div id="modalContent" class="text-sm space-y-2"></div>
-
-      <button onclick="closeModal()" class="mt-4 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
-        Close
-      </button>
-
+  <!-- Edit expected date modal -->
+  <div id="editModal" data-modal
+    class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[1px]" role="dialog"
+    aria-modal="true" aria-labelledby="editModalTitle">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+      <div class="mb-5 flex items-start justify-between">
+        <div>
+          <h2 id="editModalTitle" class="text-lg font-semibold">Edit Expected Date</h2>
+          <p id="editTicketNumber" class="mt-1 text-sm text-slate-500"></p>
+        </div>
+        <button type="button" data-close-modal="editModal" class="text-2xl leading-none text-slate-400 hover:text-slate-700"
+          aria-label="Close edit dialog">×</button>
+      </div>
+      <form id="editDateForm">
+        <label class="block">
+          <span class="mb-1.5 block text-sm font-medium text-slate-700">Expected Date</span>
+          <input id="editExpectedDate" type="date"
+            class="h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+        </label>
+        <p id="editDateError" class="mt-3 hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"></p>
+        <div class="mt-5 flex justify-end gap-3">
+          <button type="button" data-close-modal="editModal"
+            class="h-10 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button id="editDateSubmitBtn" type="submit"
+            class="h-10 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Save</button>
+        </div>
+      </form>
     </div>
   </div>
 
-  <!-- Toast -->
-  <div id="toastContainer" class="fixed top-5 right-5 space-y-2 z-50"></div>
+  <div id="toastContainer" class="fixed right-5 top-5 z-[70] space-y-2" aria-live="polite"></div>
 
   <script src="/static/js/secarch_tickets.js"></script>
-
 </body>
 
 </html>
