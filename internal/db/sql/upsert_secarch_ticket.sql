@@ -6,6 +6,8 @@ INSERT INTO secarch_tickets.tickets (
     reporter,
     assignee,
     cmdb_system_name,
+    cmdb_system_key,
+    department,
     ticket_created_at,
     ticket_closed_at,
     expected_date,
@@ -21,6 +23,8 @@ VALUES (
     $6,
     $7,
     $8,
+    $9,
+    $10,
     NOW(),
     NOW()
 )
@@ -30,15 +34,17 @@ DO UPDATE SET
     reporter          = EXCLUDED.reporter,
     assignee          = EXCLUDED.assignee,
     cmdb_system_name  = EXCLUDED.cmdb_system_name,
+    cmdb_system_key   = EXCLUDED.cmdb_system_key,
+    department        = EXCLUDED.department,
     ticket_created_at = EXCLUDED.ticket_created_at,
     ticket_closed_at  = EXCLUDED.ticket_closed_at,
-    expected_date     = EXCLUDED.expected_date,
     updated_at        = NOW()
 WHERE
     secarch_tickets.tickets.summary IS DISTINCT FROM EXCLUDED.summary OR
     secarch_tickets.tickets.reporter IS DISTINCT FROM EXCLUDED.reporter OR
     secarch_tickets.tickets.assignee IS DISTINCT FROM EXCLUDED.assignee OR
     secarch_tickets.tickets.cmdb_system_name IS DISTINCT FROM EXCLUDED.cmdb_system_name OR
+    secarch_tickets.tickets.cmdb_system_key IS DISTINCT FROM EXCLUDED.cmdb_system_key OR
+    secarch_tickets.tickets.department IS DISTINCT FROM EXCLUDED.department OR
     secarch_tickets.tickets.ticket_created_at IS DISTINCT FROM EXCLUDED.ticket_created_at OR
-    secarch_tickets.tickets.ticket_closed_at IS DISTINCT FROM EXCLUDED.ticket_closed_at OR
-    secarch_tickets.tickets.expected_date IS DISTINCT FROM EXCLUDED.expected_date;
+    secarch_tickets.tickets.ticket_closed_at IS DISTINCT FROM EXCLUDED.ticket_closed_at;

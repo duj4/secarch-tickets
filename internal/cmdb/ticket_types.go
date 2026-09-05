@@ -7,6 +7,13 @@ import (
 // TicketQueueAPIResponse represents the raw response from the CMDB ticket queue API.
 type TicketQueueAPIResponse struct {
 	Issues map[string]TicketQueueAPIResponseIssue `json:"issues"`
+	Total  int                                    `json:"total"`
+	Meta   TicketQueueAPIResponseMeta             `json:"meta"`
+}
+
+// TicketQueueAPIResponseMeta supports CMDB deployments that wrap pagination.
+type TicketQueueAPIResponseMeta struct {
+	Total int `json:"total"`
 }
 
 // TicketQueueAPIResponseIssue represents one ticket object returned by the CMDB ticket queue API.
@@ -28,9 +35,17 @@ type TicketQueueAPIResponseIssue struct {
 type Ticket struct {
 	Assignee        *string
 	CMDBSystemName  []string
+	CMDBSystemKey   string
+	Department      string
 	TicketCreatedAt time.Time
 	Reporter        string
 	TicketClosedAt  *time.Time
 	Summary         string
 	TicketNumber    string
+}
+
+// SystemReference identifies the one CMDB System associated with a ticket.
+type SystemReference struct {
+	Key  string
+	Name string
 }

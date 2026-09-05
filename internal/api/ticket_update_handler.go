@@ -9,7 +9,6 @@ import (
 	"secarch-tickets/internal/secarch"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // CreateTicketUpdateRequest is the request body for a local ticket update.
@@ -18,9 +17,7 @@ type CreateTicketUpdateRequest struct {
 }
 
 // ListTicketUpdatesHandler returns local updates for one ticket.
-func ListTicketUpdatesHandler(pool *pgxpool.Pool) gin.HandlerFunc {
-	service := secarch.NewTicketService(pool, nil)
-
+func ListTicketUpdatesHandler(service *secarch.TicketService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ticketNumber := strings.TrimSpace(c.Param("ticket_number"))
 		updates, err := service.ListTicketUpdates(c.Request.Context(), ticketNumber)
@@ -40,9 +37,7 @@ func ListTicketUpdatesHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 }
 
 // CreateTicketUpdateHandler appends a local update to one ticket.
-func CreateTicketUpdateHandler(pool *pgxpool.Pool) gin.HandlerFunc {
-	service := secarch.NewTicketService(pool, nil)
-
+func CreateTicketUpdateHandler(service *secarch.TicketService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ticketNumber := strings.TrimSpace(c.Param("ticket_number"))
 

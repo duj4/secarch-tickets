@@ -1,0 +1,365 @@
+package secarch
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"secarch-tickets/internal/cmdb"
+	"secarch-tickets/internal/logger"
+)
+
+var ErrRefreshRejected = errors.New("refresh rejected")
+
+// SyncStatus is safe to expose to the browser alongside the stored ticket data.
+type SyncStatus struct {
+	Status              string     `json:"status"`
+	LastSuccessAt       *time.Time `json:"last_success_at"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	RetryAfterSeconds   int        `json:"retry_after_seconds"`
+}
+
+// RefreshResult describes whether a user-triggered request reached CMDB.
+type RefreshResult struct {
+	Sync        SyncStatus `json:"sync"`
+	Attempted   bool       `json:"attempted"`
+	TicketCount int        `json:"ticket_count,omitempty"`
+}
+
+type refreshCoordinator struct {
+	mu                  sync.Mutex
+	inFlight            *refreshFlight
+	lastSuccessAt       *time.Time
+	nextAllowedAt       time.Time
+	circuitOpenUntil    time.Time
+	consecutiveFailures int
+	status              string
+}
+
+type refreshFlight struct {
+	done   chan struct{}
+	result RefreshResult
+	err    error
+}
+
+// Bootstrap performs the required full Closed + Open synchronization.
+func (s *TicketService) Bootstrap(ctx context.Context) error {
+	if s.cmdbClient == nil {
+		return fmt.Errorf("CMDB client is nil")
+	}
+	syncCtx, cancel := context.WithTimeout(ctx, s.policy.Timeout)
+	defer cancel()
+
+	count, err := s.syncTickets(syncCtx, false, true)
+	if err != nil {
+		return fmt.Errorf("bootstrap CMDB synchronization: %w", err)
+	}
+	now := s.now()
+	s.refresh.mu.Lock()
+	s.refresh.lastSuccessAt = timePointer(now)
+	s.refresh.nextAllowedAt = now.Add(s.policy.SuccessCooldown)
+	s.refresh.consecutiveFailures = 0
+	s.refresh.status = "cooldown"
+	s.refresh.mu.Unlock()
+	logger.Info("bootstrap CMDB synchronization completed", "ticket_count", count)
+	return nil
+}
+
+// RefreshOpenTickets runs or joins one user-triggered Open-ticket sync.
+func (s *TicketService) RefreshOpenTickets(ctx context.Context) (RefreshResult, error) {
+	s.refresh.mu.Lock()
+	flight := s.refresh.inFlight
+	leader := false
+	if flight == nil {
+		flight = &refreshFlight{done: make(chan struct{})}
+		s.refresh.inFlight = flight
+		leader = true
+	}
+	s.refresh.mu.Unlock()
+
+	if !leader {
+		return s.waitForRefresh(ctx, flight)
+	}
+
+	result, err := s.refreshOpenTicketsOnce()
+	s.refresh.mu.Lock()
+	flight.result = result
+	flight.err = err
+	if s.refresh.inFlight == flight {
+		s.refresh.inFlight = nil
+	}
+	close(flight.done)
+	s.refresh.mu.Unlock()
+	return result, err
+}
+
+func (s *TicketService) waitForRefresh(ctx context.Context, flight *refreshFlight) (RefreshResult, error) {
+	select {
+	case <-ctx.Done():
+		return RefreshResult{Sync: s.SyncStatus()}, ctx.Err()
+	case <-flight.done:
+		return flight.result, flight.err
+	}
+}
+
+func (s *TicketService) refreshOpenTicketsOnce() (RefreshResult, error) {
+	now := s.now()
+	if result, rejected := s.rejectRefresh(now); rejected {
+		return result, ErrRefreshRejected
+	}
+
+	syncCtx, cancel := context.WithTimeout(context.Background(), s.policy.Timeout)
+	defer cancel()
+	count, err := s.syncTickets(syncCtx, true, false)
+	completedAt := s.now()
+	if err != nil {
+		result := s.recordRefreshFailure(completedAt)
+		logger.Error(
+			"CMDB synchronization failed",
+			"consecutive_failures", result.Sync.ConsecutiveFailures,
+			"status", result.Sync.Status,
+			"err", err,
+		)
+		return result, err
+	}
+
+	result := s.recordRefreshSuccess(completedAt, count)
+	logger.Info("CMDB synchronization completed", "ticket_count", count)
+	return result, nil
+}
+
+func (s *TicketService) rejectRefresh(now time.Time) (RefreshResult, bool) {
+	s.refresh.mu.Lock()
+	defer s.refresh.mu.Unlock()
+
+	if !s.refresh.circuitOpenUntil.IsZero() {
+		if now.Before(s.refresh.circuitOpenUntil) {
+			s.refresh.status = "circuit_open"
+			return RefreshResult{Sync: s.syncStatusLocked(now)}, true
+		}
+		s.refresh.status = "half_open"
+		return RefreshResult{}, false
+	}
+
+	if now.Before(s.refresh.nextAllowedAt) {
+		if s.refresh.consecutiveFailures > 0 {
+			s.refresh.status = "backoff"
+		} else {
+			s.refresh.status = "cooldown"
+		}
+		return RefreshResult{Sync: s.syncStatusLocked(now)}, true
+	}
+	return RefreshResult{}, false
+}
+
+func (s *TicketService) recordRefreshSuccess(now time.Time, ticketCount int) RefreshResult {
+	s.refresh.mu.Lock()
+	defer s.refresh.mu.Unlock()
+	s.refresh.lastSuccessAt = timePointer(now)
+	s.refresh.nextAllowedAt = now.Add(s.policy.SuccessCooldown)
+	s.refresh.circuitOpenUntil = time.Time{}
+	s.refresh.consecutiveFailures = 0
+	s.refresh.status = "cooldown"
+	return RefreshResult{
+		Sync:        s.syncStatusLocked(now),
+		Attempted:   true,
+		TicketCount: ticketCount,
+	}
+}
+
+func (s *TicketService) recordRefreshFailure(now time.Time) RefreshResult {
+	s.refresh.mu.Lock()
+	defer s.refresh.mu.Unlock()
+	s.refresh.consecutiveFailures++
+	if s.refresh.consecutiveFailures >= s.policy.CircuitBreakerThreshold {
+		s.refresh.status = "circuit_open"
+		s.refresh.circuitOpenUntil = now.Add(s.policy.CircuitOpenDuration)
+		s.refresh.nextAllowedAt = time.Time{}
+	} else {
+		s.refresh.status = "backoff"
+		exponent := s.refresh.consecutiveFailures - 1
+		multiplier := math.Pow(float64(s.policy.FailureBackoffMultiplier), float64(exponent))
+		delay := time.Duration(float64(s.policy.FailureBackoff) * multiplier)
+		s.refresh.nextAllowedAt = now.Add(delay)
+	}
+	return RefreshResult{Sync: s.syncStatusLocked(now), Attempted: true}
+}
+
+// SyncStatus returns the current refresh-control state without accessing CMDB.
+func (s *TicketService) SyncStatus() SyncStatus {
+	now := s.now()
+	s.refresh.mu.Lock()
+	defer s.refresh.mu.Unlock()
+	if s.refresh.status == "circuit_open" && !now.Before(s.refresh.circuitOpenUntil) {
+		s.refresh.status = "half_open"
+	}
+	if (s.refresh.status == "cooldown" || s.refresh.status == "backoff") && !now.Before(s.refresh.nextAllowedAt) {
+		s.refresh.status = "ready"
+	}
+	return s.syncStatusLocked(now)
+}
+
+func (s *TicketService) syncStatusLocked(now time.Time) SyncStatus {
+	retryAt := s.refresh.nextAllowedAt
+	if s.refresh.status == "circuit_open" {
+		retryAt = s.refresh.circuitOpenUntil
+	}
+	retryAfter := 0
+	if now.Before(retryAt) {
+		retryAfter = int(math.Ceil(retryAt.Sub(now).Seconds()))
+	}
+	return SyncStatus{
+		Status:              defaultStatus(s.refresh.status),
+		LastSuccessAt:       cloneTimePointer(s.refresh.lastSuccessAt),
+		ConsecutiveFailures: s.refresh.consecutiveFailures,
+		RetryAfterSeconds:   retryAfter,
+	}
+}
+
+func (s *TicketService) syncTickets(ctx context.Context, openOnly, resolveAllSystems bool) (int, error) {
+	var openBefore []string
+	knownDepartments := make(map[string]string)
+	if openOnly {
+		var err error
+		openBefore, err = ListOpenTicketNumbers(ctx, s.pool)
+		if err != nil {
+			return 0, err
+		}
+		knownDepartments, err = ListKnownDepartments(ctx, s.pool)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	tickets, err := s.cmdbClient.ListTickets(ctx, cmdb.SecArchTicketJQL(openOnly))
+	if err != nil {
+		return 0, err
+	}
+
+	if openOnly {
+		openKeys := make(map[string]struct{}, len(tickets))
+		for _, ticket := range tickets {
+			openKeys[ticket.TicketNumber] = struct{}{}
+		}
+		missing := make([]string, 0)
+		for _, key := range openBefore {
+			if _, ok := openKeys[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		closed, err := s.confirmClosedTickets(ctx, missing)
+		if err != nil {
+			return 0, err
+		}
+		tickets = append(tickets, closed...)
+	}
+
+	if err := s.attachDepartments(ctx, tickets, knownDepartments, resolveAllSystems); err != nil {
+		return 0, err
+	}
+	if err := UpsertTickets(ctx, s.pool, tickets, defaultExpectedDate(s.now())); err != nil {
+		return 0, err
+	}
+	return len(tickets), nil
+}
+
+func (s *TicketService) confirmClosedTickets(ctx context.Context, candidates []string) ([]*cmdb.Ticket, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	sort.Strings(candidates)
+	closed := make([]*cmdb.Ticket, 0)
+	for start := 0; start < len(candidates); start += s.policy.TicketKeyBatchSize {
+		end := min(start+s.policy.TicketKeyBatchSize, len(candidates))
+		jql, err := cmdb.TicketKeysJQL(candidates[start:end])
+		if err != nil {
+			return nil, err
+		}
+		results, err := s.cmdbClient.ListTickets(ctx, jql)
+		if err != nil {
+			return nil, fmt.Errorf("confirm Closed tickets: %w", err)
+		}
+		for _, ticket := range results {
+			if ticket.TicketClosedAt != nil {
+				closed = append(closed, ticket)
+			}
+		}
+	}
+	return closed, nil
+}
+
+func (s *TicketService) attachDepartments(ctx context.Context, tickets []*cmdb.Ticket, known map[string]string, resolveAll bool) error {
+	references := make(map[string]cmdb.SystemReference)
+	for _, ticket := range tickets {
+		if ticket == nil || ticket.CMDBSystemKey == "" {
+			continue
+		}
+		if !resolveAll {
+			if department := known[ticket.CMDBSystemKey]; department != "" {
+				ticket.Department = department
+				continue
+			}
+		}
+		name := ""
+		if len(ticket.CMDBSystemName) == 1 {
+			name = strings.TrimSpace(strings.Split(ticket.CMDBSystemName[0], "(")[0])
+		}
+		references[ticket.CMDBSystemKey] = cmdb.SystemReference{Key: ticket.CMDBSystemKey, Name: name}
+	}
+
+	toResolve := make([]cmdb.SystemReference, 0, len(references))
+	for _, reference := range references {
+		toResolve = append(toResolve, reference)
+	}
+	resolved, err := s.cmdbClient.ResolveDepartments(ctx, toResolve)
+	if err != nil {
+		return err
+	}
+	for _, ticket := range tickets {
+		if ticket == nil || ticket.CMDBSystemKey == "" {
+			continue
+		}
+		if department := resolved[ticket.CMDBSystemKey]; department != "" {
+			ticket.Department = department
+		} else if ticket.Department == "" {
+			ticket.Department = known[ticket.CMDBSystemKey]
+		}
+	}
+	return nil
+}
+
+func defaultExpectedDate(now time.Time) time.Time {
+	china := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now = now.In(china)
+	year, month, day := now.Date()
+	targetMonth := month + 1
+	lastDay := time.Date(year, targetMonth+1, 0, 0, 0, 0, 0, china).Day()
+	if day > lastDay {
+		day = lastDay
+	}
+	return time.Date(year, targetMonth, day, 0, 0, 0, 0, china)
+}
+
+func defaultStatus(status string) string {
+	if status == "" {
+		return "ready"
+	}
+	return status
+}
+
+func timePointer(value time.Time) *time.Time {
+	return &value
+}
+
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}

@@ -16,9 +16,9 @@ import (
 	"secarch-tickets/internal/db"
 	"secarch-tickets/internal/logger"
 	"secarch-tickets/internal/middleware"
+	"secarch-tickets/internal/secarch"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //go:embed templates/*.html static
@@ -127,6 +127,19 @@ func Run() error {
 		return fmt.Errorf("failed to create CMDB client: client is nil")
 	}
 
+	service := secarch.NewTicketService(pool, cmdbClient, secarch.RefreshPolicy{
+		Timeout:                  cmdbConfig.HTTPTimeout(),
+		SuccessCooldown:          cmdbConfig.RefreshSuccessCooldown(),
+		FailureBackoff:           cmdbConfig.RefreshFailureBackoff(),
+		FailureBackoffMultiplier: cmdbConfig.RefreshFailureBackoffMultiplier,
+		CircuitBreakerThreshold:  cmdbConfig.RefreshCircuitBreakerThreshold,
+		CircuitOpenDuration:      cmdbConfig.RefreshCircuitOpenDuration(),
+		TicketKeyBatchSize:       cmdbConfig.ObjectBatchSize,
+	})
+	if err := service.Bootstrap(ctx); err != nil {
+		return err
+	}
+
 	// Set Gin mode before creating the engine.
 	if env == "prod" {
 		gin.SetMode(gin.ReleaseMode)
@@ -163,7 +176,7 @@ func Run() error {
 	r.StaticFS("/static", http.FS(staticFS))
 
 	// Register pages and API routes.
-	registerRoutes(r, pool, cmdbClient)
+	registerRoutes(r, service)
 
 	// Start the HTTPS server.
 	return runTLSServer(r, env, tlsPaths.ServerCert, tlsPaths.ServerKey)
@@ -173,7 +186,7 @@ func Run() error {
 // registerRoutes registers all page and API routes for the web service.
 //
 // The API handlers share the database pool and CMDB client created during startup.
-func registerRoutes(r *gin.Engine, pool *pgxpool.Pool, cmdbClient *cmdb.Client) {
+func registerRoutes(r *gin.Engine, service *secarch.TicketService) {
 	// Health check.
 	r.GET("/healthz", api.HealthHandler)
 
@@ -182,12 +195,12 @@ func registerRoutes(r *gin.Engine, pool *pgxpool.Pool, cmdbClient *cmdb.Client) 
 		c.HTML(http.StatusOK, "secarch_tickets.html", nil)
 	})
 
-	r.POST("/api/tickets", api.CreateTicketHandler(pool, cmdbClient))
-	r.GET("/api/tickets", api.ListTicketsHandler(pool, cmdbClient))
-	r.PUT("/api/tickets/:ticket_number", api.UpdateTicketHandler(pool, cmdbClient))
-	r.DELETE("/api/tickets/:ticket_number", api.DeleteTicketHandler(pool, cmdbClient))
-	r.GET("/api/tickets/:ticket_number/updates", api.ListTicketUpdatesHandler(pool))
-	r.POST("/api/tickets/:ticket_number/updates", api.CreateTicketUpdateHandler(pool))
+	r.GET("/api/tickets", api.ListTicketsHandler(service))
+	r.POST("/api/tickets/refresh", api.RefreshTicketsHandler(service))
+	r.PUT("/api/tickets/:ticket_number/expected-date", api.UpdateExpectedDateHandler(service))
+	r.GET("/api/tickets/:ticket_number/updates", api.ListTicketUpdatesHandler(service))
+	r.POST("/api/tickets/:ticket_number/updates", api.CreateTicketUpdateHandler(service))
+	r.GET("/api/statistics/closed", api.ClosedStatisticsHandler(service))
 }
 
 // runTLSServer starts the Gin HTTPS server.

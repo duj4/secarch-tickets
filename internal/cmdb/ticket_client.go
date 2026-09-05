@@ -7,116 +7,254 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
-// GetTicket fetches and normalizes one SecArch ticket from the CMDB ticket API.
+const (
+	secArchRequestTypeReview    = "Request for SecDesign/CloudSec/TPSA Case Review"
+	secArchRequestTypeException = "Request for Control Exception or NAC Case Review"
+)
+
+var (
+	issueKeyPattern  = regexp.MustCompile(`(?i)^[a-z][a-z0-9_-]*-\d+$`)
+	systemKeyPattern = regexp.MustCompile(`(?i)^(.+?)\s*\(([a-z][a-z0-9_-]*-\d+)\)\s*$`)
+)
+
+// SecArchTicketJQL returns the common request-type filter. When openOnly is
+// true, Closed tickets are excluded from the queue query.
+func SecArchTicketJQL(openOnly bool) string {
+	base := fmt.Sprintf(
+		`("Customer Request Type" = "%s" OR "Customer Request Type" = "%s")`,
+		secArchRequestTypeReview,
+		secArchRequestTypeException,
+	)
+	if openOnly {
+		return base + ` AND status != Closed`
+	}
+	return base
+}
+
+// TicketKeysJQL creates a bounded JQL query for a known set of ticket keys.
+func TicketKeysJQL(keys []string) (string, error) {
+	if len(keys) == 0 {
+		return "", fmt.Errorf("ticket keys must not be empty")
+	}
+	quoted := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if !issueKeyPattern.MatchString(key) {
+			return "", fmt.Errorf("invalid ticket key %q", key)
+		}
+		quoted = append(quoted, `"`+strings.ToUpper(key)+`"`)
+	}
+	return `key IN (` + strings.Join(quoted, ",") + `)`, nil
+}
+
+// GetTicket fetches and normalizes one ticket from the CMDB ticket API.
 func (c *Client) GetTicket(ctx context.Context, ticketNumber string) (*Ticket, error) {
-	resp, err := c.fetchTicket(ctx, ticketNumber)
+	jql, err := TicketKeysJQL([]string{ticketNumber})
+	if err != nil {
+		return nil, err
+	}
+	tickets, err := c.ListTickets(ctx, jql)
+	if err != nil {
+		return nil, err
+	}
+	if len(tickets) == 0 {
+		return nil, fmt.Errorf("ticket not found: %s", ticketNumber)
+	}
+	if len(tickets) > 1 {
+		return nil, fmt.Errorf("unexpected multiple issues for %s", ticketNumber)
+	}
+	return tickets[0], nil
+}
+
+// ListTickets fetches every page matching jql and returns normalized tickets.
+func (c *Client) ListTickets(ctx context.Context, jql string) ([]*Ticket, error) {
+	jql = strings.TrimSpace(jql)
+	if jql == "" {
+		return nil, fmt.Errorf("ticket JQL must not be empty")
+	}
+
+	ticketsByKey := make(map[string]*Ticket)
+	for startAt := 0; ; {
+		resp, err := c.fetchTicketPage(ctx, jql, startAt)
+		if err != nil {
+			return nil, fmt.Errorf("fetch ticket page at offset %d: %w", startAt, err)
+		}
+
+		before := len(ticketsByKey)
+		for issueKey, issue := range resp.Issues {
+			ticket, err := normalizeTicket(issueKey, issue)
+			if err != nil {
+				return nil, err
+			}
+			ticketsByKey[ticket.TicketNumber] = ticket
+		}
+
+		pageCount := len(resp.Issues)
+		total := max(resp.Total, resp.Meta.Total)
+		if pageCount == 0 {
+			if total > startAt {
+				return nil, fmt.Errorf("ticket pagination ended at offset %d before total %d", startAt, total)
+			}
+			break
+		}
+		startAt += pageCount
+		if total > 0 && startAt >= total {
+			break
+		}
+		if len(ticketsByKey) == before {
+			return nil, fmt.Errorf("ticket pagination made no progress at offset %d", startAt)
+		}
+		if total == 0 && pageCount < c.cfg.PageSize {
+			break
+		}
+	}
+
+	keys := make([]string, 0, len(ticketsByKey))
+	for key := range ticketsByKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	tickets := make([]*Ticket, 0, len(keys))
+	for _, key := range keys {
+		tickets = append(tickets, ticketsByKey[key])
+	}
+	return tickets, nil
+}
+
+func (c *Client) fetchTicketPage(ctx context.Context, jql string, startAt int) (*TicketQueueAPIResponse, error) {
+	requestURL, err := c.buildTicketQueueRequestURL(jql, startAt)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(resp.Issues) == 0 {
-		return nil, fmt.Errorf("ticket not found: %s", ticketNumber)
-	}
-
-	if len(resp.Issues) > 1 {
-		return nil, fmt.Errorf("unexpected multiple issues for %s", ticketNumber)
-	}
-
-	var (
-		issue    TicketQueueAPIResponseIssue
-		issueKey string
-	)
-
-	for k, v := range resp.Issues {
-		issueKey = k
-		issue = v
-		break
-	}
-
-	var assigneePtr *string
-	if issue.Assignee != nil {
-		assigneePtr = issue.Assignee
-	}
-
-	const cmdbTimeLayout = "2006-01-02T15:04:05.000-0700"
-	createdAt, err := time.Parse(cmdbTimeLayout, issue.Created)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("parse created time(%s): %w", issue.Created, err)
+		return nil, fmt.Errorf("create CMDB ticket request: %w", err)
+	}
+	req.Header.Set("accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query CMDB ticket API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("CMDB ticket API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var out TicketQueueAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode CMDB ticket response: %w", err)
+	}
+	if out.Issues == nil {
+		out.Issues = make(map[string]TicketQueueAPIResponseIssue)
+	}
+	return &out, nil
+}
+
+func (c *Client) buildTicketQueueRequestURL(jql string, startAt int) (string, error) {
+	baseURL, err := url.Parse(c.cfg.TicketAPIURL)
+	if err != nil {
+		return "", fmt.Errorf("parse ticket_api_url %q: %w", c.cfg.TicketAPIURL, err)
+	}
+
+	params := url.Values{}
+	for _, field := range []string{"Assignee", "CMDB System Name", "Created", "Reporter", "Resolved", "Summary"} {
+		params.Add("fields", field)
+	}
+	params.Set("startAt", strconv.Itoa(startAt))
+	params.Set("pageSize", strconv.Itoa(c.cfg.PageSize))
+	params.Set("maxResults", strconv.Itoa(c.cfg.PageSize))
+	params.Set("jqlQuery", jql)
+	params.Set("useTicketID", "false")
+	params.Set("overview", "false")
+	params.Set("onlyDisplayFields", "true")
+	params.Set("portalNameMapping", "false")
+	params.Set("fieldDuplicate", "true")
+	params.Set("include_cmdb_details", "false")
+	baseURL.RawQuery = params.Encode()
+	return baseURL.String(), nil
+}
+
+func normalizeTicket(issueKey string, issue TicketQueueAPIResponseIssue) (*Ticket, error) {
+	issueKey = strings.TrimSpace(issueKey)
+	if issueKey == "" {
+		return nil, fmt.Errorf("CMDB returned an issue with an empty key")
+	}
+
+	createdAt, err := parseCMDBTime(issue.Created)
+	if err != nil {
+		return nil, fmt.Errorf("parse created time for %s: %w", issueKey, err)
 	}
 
 	var closedAt *time.Time
-	if issue.Resolved != nil {
-		t, err := time.Parse(cmdbTimeLayout, *issue.Resolved)
+	if issue.Resolved != nil && strings.TrimSpace(*issue.Resolved) != "" {
+		resolvedAt, err := parseCMDBTime(*issue.Resolved)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse resolved time for %s: %w", issueKey, err)
 		}
-		closedAt = &t
+		closedAt = &resolvedAt
+	}
+
+	system, err := ticketSystemReference(issue.CMDBSystemName)
+	if err != nil {
+		return nil, fmt.Errorf("normalize CMDB System Name for %s: %w", issueKey, err)
 	}
 
 	return &Ticket{
 		TicketNumber:    issueKey,
 		Summary:         issue.Summary,
 		Reporter:        issue.Reporter,
-		Assignee:        assigneePtr,
+		Assignee:        issue.Assignee,
 		CMDBSystemName:  issue.CMDBSystemName,
+		CMDBSystemKey:   system.Key,
 		TicketCreatedAt: createdAt,
 		TicketClosedAt:  closedAt,
 	}, nil
 }
 
-func (c *Client) fetchTicket(ctx context.Context, ticketNumber string) (*TicketQueueAPIResponse, error) {
-	requestURL, err := c.buildTicketQueueRequestURL(ticketNumber)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build ticket number request URL: %w", err)
+func parseCMDBTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{"2006-01-02T15:04:05.000-0700", "2006-01-02T15:04:05-0700", time.RFC3339Nano, time.RFC3339} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed, nil
+		}
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create ticket number request: %w", err)
-	}
-
-	req.Header.Set("accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query cmdb ticket API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("cmdb ticket API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var out TicketQueueAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("failed to decode cmdb ticket response: %w", err)
-	}
-
-	return &out, nil
+	return time.Time{}, fmt.Errorf("unsupported CMDB timestamp %q", value)
 }
 
-// buildTicketQueueRequestURL builds the CMDB ticket API URL for one ticket number.
-func (c *Client) buildTicketQueueRequestURL(ticketNumber string) (string, error) {
-	baseURL, err := url.Parse(c.cfg.TicketAPIURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse cmdb ticket_api_url %q: %w", c.cfg.TicketAPIURL, err)
+func ticketSystemReference(values []string) (SystemReference, error) {
+	nonEmpty := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			nonEmpty = append(nonEmpty, value)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return SystemReference{}, nil
+	}
+	if len(nonEmpty) > 1 {
+		return SystemReference{}, fmt.Errorf("expected at most one System, got %d", len(nonEmpty))
 	}
 
-	params := url.Values{}
-	params.Add("fields", "Assignee")
-	params.Add("fields", "CMDB System Name")
-	params.Add("fields", "Created")
-	params.Add("fields", "Reporter")
-	params.Add("fields", "Resolved")
-	params.Add("fields", "Summary")
-	params.Set("issueKey", ticketNumber)
-	params.Set("useTicketID", "false")
-
-	baseURL.RawQuery = params.Encode()
-
-	return baseURL.String(), nil
+	value := nonEmpty[0]
+	if issueKeyPattern.MatchString(value) {
+		return SystemReference{Key: strings.ToUpper(value)}, nil
+	}
+	matches := systemKeyPattern.FindStringSubmatch(value)
+	if len(matches) != 3 {
+		return SystemReference{}, fmt.Errorf("cannot extract System key from %q", value)
+	}
+	return SystemReference{Key: strings.ToUpper(matches[2]), Name: strings.TrimSpace(matches[1])}, nil
 }

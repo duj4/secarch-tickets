@@ -6,12 +6,20 @@ import (
 
 // Config holds settings for the CMDB client.
 type Config struct {
-	TicketAPIURL       string `json:"ticket_api_url"`
-	PageSize           int    `json:"page_size"`
-	CACertPath         string `json:"ca_cert_path"`
-	ClientCertPath     string `json:"client_cert_path"`
-	ClientKeyPath      string `json:"client_key_path"`
-	HTTPTimeoutSeconds int    `json:"http_timeout_seconds"`
+	TicketAPIURL                    string `json:"ticket_api_url"`
+	ObjectsAPIURL                   string `json:"objects_api_url"`
+	PageSize                        int    `json:"page_size"`
+	ObjectBatchSize                 int    `json:"object_batch_size"`
+	ObjectMaxConcurrency            int    `json:"object_max_concurrency"`
+	HTTPTimeoutSeconds              int    `json:"http_timeout_seconds"`
+	RefreshSuccessCooldownSeconds   int    `json:"refresh_success_cooldown_seconds"`
+	RefreshFailureBackoffSeconds    int    `json:"refresh_failure_backoff_seconds"`
+	RefreshFailureBackoffMultiplier int    `json:"refresh_failure_backoff_multiplier"`
+	RefreshCircuitBreakerThreshold  int    `json:"refresh_circuit_breaker_threshold"`
+	RefreshCircuitOpenSeconds       int    `json:"refresh_circuit_open_seconds"`
+	CACertPath                      string `json:"ca_cert_path"`
+	ClientCertPath                  string `json:"client_cert_path"`
+	ClientKeyPath                   string `json:"client_key_path"`
 }
 
 // Client calls the CMDB API over the configured HTTP transport.

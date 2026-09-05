@@ -25,13 +25,40 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.TicketAPIURL == "" {
 		return Config{}, fmt.Errorf("ticket_api_url is empty")
 	}
-
-	if cfg.PageSize == 0 {
-		cfg.PageSize = 100
+	if cfg.ObjectsAPIURL == "" {
+		return Config{}, fmt.Errorf("objects_api_url is empty")
 	}
 
-	if cfg.HTTPTimeoutSeconds == 0 {
-		cfg.HTTPTimeoutSeconds = 15
+	if cfg.PageSize <= 0 {
+		cfg.PageSize = 100
+	}
+	if cfg.ObjectBatchSize <= 0 {
+		cfg.ObjectBatchSize = 50
+	}
+	if cfg.ObjectMaxConcurrency <= 0 {
+		cfg.ObjectMaxConcurrency = 2
+	}
+
+	if cfg.HTTPTimeoutSeconds <= 0 {
+		cfg.HTTPTimeoutSeconds = 60
+	}
+	if cfg.RefreshSuccessCooldownSeconds < 0 {
+		return Config{}, fmt.Errorf("refresh_success_cooldown_seconds cannot be negative")
+	}
+	if cfg.RefreshSuccessCooldownSeconds == 0 {
+		cfg.RefreshSuccessCooldownSeconds = 5
+	}
+	if cfg.RefreshFailureBackoffSeconds <= 0 {
+		cfg.RefreshFailureBackoffSeconds = 10
+	}
+	if cfg.RefreshFailureBackoffMultiplier < 1 {
+		cfg.RefreshFailureBackoffMultiplier = 2
+	}
+	if cfg.RefreshCircuitBreakerThreshold <= 0 {
+		cfg.RefreshCircuitBreakerThreshold = 3
+	}
+	if cfg.RefreshCircuitOpenSeconds <= 0 {
+		cfg.RefreshCircuitOpenSeconds = 300
 	}
 
 	return cfg, nil
@@ -40,6 +67,21 @@ func LoadConfig(path string) (Config, error) {
 // HTTPTimeout returns the configured HTTP timeout as a time.Duration.
 func (cfg *Config) HTTPTimeout() time.Duration {
 	return time.Duration(cfg.HTTPTimeoutSeconds) * time.Second
+}
+
+// RefreshSuccessCooldown is the minimum quiet period after a successful sync.
+func (cfg *Config) RefreshSuccessCooldown() time.Duration {
+	return time.Duration(cfg.RefreshSuccessCooldownSeconds) * time.Second
+}
+
+// RefreshFailureBackoff is the initial delay after a failed sync.
+func (cfg *Config) RefreshFailureBackoff() time.Duration {
+	return time.Duration(cfg.RefreshFailureBackoffSeconds) * time.Second
+}
+
+// RefreshCircuitOpenDuration is how long an open circuit rejects refreshes.
+func (cfg *Config) RefreshCircuitOpenDuration() time.Duration {
+	return time.Duration(cfg.RefreshCircuitOpenSeconds) * time.Second
 }
 
 // NewClient creates a CMDB client backed by an mTLS HTTP transport.

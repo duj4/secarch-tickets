@@ -7,6 +7,8 @@ SELECT
     t.reporter,
     t.assignee,
     t.cmdb_system_name,
+    t.cmdb_system_key,
+    t.department,
     t.ticket_created_at,
     t.ticket_closed_at,
     t.expected_date,
