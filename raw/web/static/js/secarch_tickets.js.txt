@@ -397,7 +397,11 @@ async function refreshTickets() {
       return
     }
     await loadTickets({ resetPage: false })
-    showToast(`Synchronization complete${body.ticket_count ? ` · ${body.ticket_count} tickets updated` : ""}`, "success")
+    const updatedCount = Number(body.updated_count || 0)
+    const updateSummary = updatedCount === 0
+      ? "No ticket changes"
+      : `${updatedCount} ticket change${updatedCount === 1 ? "" : "s"} synchronized`
+    showToast(`Synchronization complete · ${updateSummary}`, "success")
   } catch (error) {
     console.error(error)
     showSyncNetworkError()
