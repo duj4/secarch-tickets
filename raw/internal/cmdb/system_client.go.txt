@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"secarch-tickets/internal/logger"
 )
 
 const (
@@ -143,28 +145,89 @@ func (c *Client) resolveDepartmentBatch(ctx context.Context, keys []string, refe
 	for _, object := range objects {
 		key := identifySystemObject(object, references, byName)
 		if key == "" {
-			return nil, fmt.Errorf("cannot match CMDB System object %q to a requested key", object.Label)
+			continue
 		}
-		department, err := objectAttributeString(object.Attrs[systemDepartmentAttr])
+		department, err := systemObjectDepartment(object)
 		if err != nil {
 			return nil, fmt.Errorf("read %s for %s: %w", systemDepartmentAttr, key, err)
-		}
-		if department == "" {
-			return nil, fmt.Errorf("CMDB System %s has no %s", key, systemDepartmentAttr)
 		}
 		resolved[key] = department
 	}
 
 	for _, key := range keys {
-		if resolved[key] == "" {
-			return nil, fmt.Errorf("CMDB objects API did not return System %s", key)
+		if resolved[key] != "" {
+			continue
 		}
+		reference := references[key]
+		if reference.Name == "" {
+			return nil, fmt.Errorf("CMDB objects API did not return System %s and no System name is available for fallback", key)
+		}
+		logger.Warn(
+			"CMDB System key lookup did not resolve object; falling back to unique name",
+			"system_key", key,
+			"system_name", reference.Name,
+		)
+		department, err := c.resolveDepartmentByLabel(ctx, key, reference.Name)
+		if err != nil {
+			return nil, err
+		}
+		resolved[key] = department
 	}
 	return resolved, nil
 }
 
+func (c *Client) resolveDepartmentByLabel(ctx context.Context, key, label string) (string, error) {
+	objects := make([]systemObject, 0, 1)
+	for page := 1; ; page++ {
+		result, err := c.querySystemObjectsByLabelPage(ctx, label, page, 10)
+		if err != nil {
+			return "", fmt.Errorf("fallback lookup for System %s by name %q: %w", key, label, err)
+		}
+		for _, object := range result.Objects {
+			if strings.EqualFold(strings.TrimSpace(object.Label), strings.TrimSpace(label)) {
+				objects = append(objects, object)
+			}
+		}
+		lastPage := max(result.Meta.TotalPages, result.Meta.LastPage)
+		if lastPage <= page {
+			break
+		}
+	}
+
+	if len(objects) == 0 {
+		return "", fmt.Errorf("CMDB objects API did not return System %s by key or unique name %q", key, label)
+	}
+	if len(objects) > 1 {
+		return "", fmt.Errorf("CMDB objects API returned %d Systems with name %q", len(objects), label)
+	}
+	department, err := systemObjectDepartment(objects[0])
+	if err != nil {
+		return "", fmt.Errorf("read %s for %s found by name %q: %w", systemDepartmentAttr, key, label, err)
+	}
+	return department, nil
+}
+
+func systemObjectDepartment(object systemObject) (string, error) {
+	department, err := objectAttributeString(object.Attrs[systemDepartmentAttr])
+	if err != nil {
+		return "", err
+	}
+	if department == "" {
+		return "", fmt.Errorf("attribute is empty")
+	}
+	return department, nil
+}
+
 func (c *Client) querySystemObjectsPage(ctx context.Context, iql string, page, pageSize int) (*systemObjectsResponse, error) {
-	requestURL, err := c.buildSystemObjectsRequestURL(iql, page, pageSize)
+	return c.querySystemObjects(ctx, iql, "", page, pageSize)
+}
+
+func (c *Client) querySystemObjectsByLabelPage(ctx context.Context, label string, page, pageSize int) (*systemObjectsResponse, error) {
+	return c.querySystemObjects(ctx, "", label, page, pageSize)
+}
+
+func (c *Client) querySystemObjects(ctx context.Context, iql, label string, page, pageSize int) (*systemObjectsResponse, error) {
+	requestURL, err := c.buildSystemObjectsRequestURL(iql, label, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +254,7 @@ func (c *Client) querySystemObjectsPage(ctx context.Context, iql string, page, p
 	return &result, nil
 }
 
-func (c *Client) buildSystemObjectsRequestURL(iql string, page, pageSize int) (string, error) {
+func (c *Client) buildSystemObjectsRequestURL(iql, label string, page, pageSize int) (string, error) {
 	baseURL, err := url.Parse(c.cfg.ObjectsAPIURL)
 	if err != nil {
 		return "", fmt.Errorf("parse objects_api_url %q: %w", c.cfg.ObjectsAPIURL, err)
@@ -199,7 +262,12 @@ func (c *Client) buildSystemObjectsRequestURL(iql string, page, pageSize int) (s
 	params := url.Values{}
 	params.Set("schemaName", systemSchemaName)
 	params.Set("objectType", systemObjectType)
-	params.Set("iql", iql)
+	if strings.TrimSpace(iql) != "" {
+		params.Set("iql", iql)
+	}
+	if strings.TrimSpace(label) != "" {
+		params.Set("label", label)
+	}
 	params.Set("childType", "false")
 	params.Add("attrsInclude", systemDepartmentAttr)
 	params.Set("page", strconv.Itoa(page))

@@ -26,9 +26,9 @@ var webFiles embed.FS
 
 const (
 	defaultListenAddr = ":8443"
-	defaultTLSDir     = "/d/d1/ai-info/tls"
+	defaultTLSDir     = "/d/d1/secarch-tickets/tls"
 	defaultCACertFile = "/etc/pki/ca-trust/source/anchors/katello-server-ca.pem"
-	defaultConfigDir  = "/d/d1/ai-info/config"
+	defaultConfigDir  = "/d/d1/secarch-tickets/config"
 )
 
 // TLSPaths groups the server and client certificate paths used by the web service.

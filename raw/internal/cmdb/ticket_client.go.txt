@@ -218,6 +218,7 @@ func normalizeTicket(issueKey string, issue TicketQueueAPIResponseIssue) (*Ticke
 		Assignee:        issue.Assignee,
 		CMDBSystemName:  issue.CMDBSystemName,
 		CMDBSystemKey:   system.Key,
+		CMDBSystemLabel: system.Name,
 		TicketCreatedAt: createdAt,
 		TicketClosedAt:  closedAt,
 	}, nil

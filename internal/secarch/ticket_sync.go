@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -305,11 +304,10 @@ func (s *TicketService) attachDepartments(ctx context.Context, tickets []*cmdb.T
 				continue
 			}
 		}
-		name := ""
-		if len(ticket.CMDBSystemName) == 1 {
-			name = strings.TrimSpace(strings.Split(ticket.CMDBSystemName[0], "(")[0])
+		references[ticket.CMDBSystemKey] = cmdb.SystemReference{
+			Key:  ticket.CMDBSystemKey,
+			Name: ticket.CMDBSystemLabel,
 		}
-		references[ticket.CMDBSystemKey] = cmdb.SystemReference{Key: ticket.CMDBSystemKey, Name: name}
 	}
 
 	toResolve := make([]cmdb.SystemReference, 0, len(references))

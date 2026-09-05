@@ -36,6 +36,7 @@ type Ticket struct {
 	Assignee        *string
 	CMDBSystemName  []string
 	CMDBSystemKey   string
+	CMDBSystemLabel string
 	Department      string
 	TicketCreatedAt time.Time
 	Reporter        string
