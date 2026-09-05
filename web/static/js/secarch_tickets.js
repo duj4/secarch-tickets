@@ -458,6 +458,8 @@ function populateTicketDetails(ticket) {
   document.getElementById("detailDepartment").textContent = ticket.department || "Unassigned"
   document.getElementById("detailSummary").textContent = ticket.summary || "—"
   document.getElementById("detailClosedRow").classList.toggle("hidden", !isClosed)
+  document.getElementById("detailSummaryRow").classList.toggle("lg:col-span-3", isClosed)
+  document.getElementById("detailSummaryRow").classList.toggle("lg:col-span-4", !isClosed)
   document.getElementById("detailClosedAt").textContent = formatDateTime(ticket.ticket_closed_at)
 }
 

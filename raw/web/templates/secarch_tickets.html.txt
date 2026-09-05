@@ -215,12 +215,11 @@
           <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Department</p><p id="detailDepartment" class="mt-1 break-words text-sm text-slate-700"></p></div>
           <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Reporter</p><p id="detailReporter" class="mt-1 text-sm text-slate-700"></p></div>
           <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Assignee</p><p id="detailAssignee" class="mt-1 text-sm text-slate-700"></p></div>
-          <div id="detailClosedRow" class="hidden sm:col-span-2 lg:col-span-2"><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Closed At</p><p id="detailClosedAt" class="mt-1 text-sm text-slate-700"></p></div>
-        </section>
-
-        <section class="mt-5 rounded-xl bg-slate-50 p-4">
-          <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Summary</h3>
-          <p id="detailSummary" class="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700"></p>
+          <div id="detailClosedRow" class="hidden sm:col-span-2 lg:col-span-1"><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Closed At</p><p id="detailClosedAt" class="mt-1 text-sm text-slate-700"></p></div>
+          <div id="detailSummaryRow" class="sm:col-span-2 lg:col-span-4">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Summary</p>
+            <p id="detailSummary" class="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700"></p>
+          </div>
         </section>
 
         <section id="updatesSection" class="mt-6 border-t border-slate-200 pt-5" aria-labelledby="updatesTitle">
