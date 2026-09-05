@@ -6,6 +6,7 @@ let pageSize = 10
 let sortField = "expected_date"
 let sortAsc = true
 let statusFilter = "open"
+let selectedDepartments = new Set()
 let activeTicketNumber = ""
 let refreshInFlight = false
 let currentSyncStatus = null
@@ -76,11 +77,15 @@ function ticketSummaryDisplay(ticket) {
   return summary.replace(/^SecDesign Case Review\s*-\s*Ad[\s-]*hoc\s*-\s*/i, "").trim() || summary || "—"
 }
 
-function getFilteredTickets() {
+function ticketDepartment(ticket) {
+  return String(ticket.department || "").trim() || "Unassigned"
+}
+
+function getBaseFilteredTickets() {
   const search = document.getElementById("search").value.trim().toLowerCase()
   return allData.filter(ticket => {
     const searchable = [
-      ticket.ticket_number, ticket.summary, ticketSystems(ticket), ticket.department,
+      ticket.ticket_number, ticket.summary, ticketSystems(ticket), ticketDepartment(ticket),
       ticket.reporter, ticket.assignee
     ].join(" ").toLowerCase()
     const isClosed = Boolean(ticket.ticket_closed_at)
@@ -89,6 +94,67 @@ function getFilteredTickets() {
       (statusFilter === "closed" && isClosed)
     return searchable.includes(search) && matchesStatus
   })
+}
+
+function getFilteredTickets() {
+  const tickets = getBaseFilteredTickets()
+  if (selectedDepartments.size === 0) return tickets
+  return tickets.filter(ticket => selectedDepartments.has(ticketDepartment(ticket)))
+}
+
+function departmentOptions(tickets) {
+  const counts = new Map()
+  tickets.forEach(ticket => {
+    const department = ticketDepartment(ticket)
+    counts.set(department, (counts.get(department) || 0) + 1)
+  })
+  return [...counts.entries()].sort(([left], [right]) => {
+    if (left === "Unassigned") return 1
+    if (right === "Unassigned") return -1
+    return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true })
+  })
+}
+
+function renderDepartmentFilters(baseTickets) {
+  const options = departmentOptions(baseTickets)
+  const available = new Set(options.map(([department]) => department))
+  selectedDepartments.forEach(department => {
+    if (!available.has(department)) selectedDepartments.delete(department)
+  })
+
+  const allActive = selectedDepartments.size === 0
+  const allClasses = allActive
+    ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+    : "border-slate-300 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+  const tags = [`
+    <button type="button" data-department-all="true" aria-pressed="${allActive}"
+      class="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition ${allClasses}">
+      All <span class="opacity-75">${baseTickets.length}</span>
+    </button>`]
+
+  options.forEach(([department, count]) => {
+    const active = selectedDepartments.has(department)
+    const classes = active
+      ? "border-violet-600 bg-violet-600 text-white shadow-sm"
+      : "border-slate-300 bg-white text-slate-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
+    tags.push(`
+      <button type="button" data-department-filter="${escapeHTML(department)}" aria-pressed="${active}"
+        class="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition ${classes}">
+        ${escapeHTML(department)} <span class="opacity-75">${count}</span>
+      </button>`)
+  })
+
+  document.getElementById("departmentTags").innerHTML = tags.join("")
+  const selectedCount = selectedDepartments.size
+  document.getElementById("departmentSelectionMeta").textContent = selectedCount === 0
+    ? "All departments"
+    : `${selectedCount} selected`
+  return options
+}
+
+function showDepartmentColumn(options) {
+  const effectiveCount = selectedDepartments.size === 0 ? options.length : selectedDepartments.size
+  return effectiveCount > 1
 }
 
 function sortedTickets(tickets) {
@@ -100,13 +166,13 @@ function sortedTickets(tickets) {
       right = ticketSystems(second)
     }
     if (sortField === "expected_date") {
-      left = new Date(left || 0)
-      right = new Date(right || 0)
+      left = new Date(left || 0).getTime()
+      right = new Date(right || 0).getTime()
     }
-    if (typeof left === "string") left = left.toLowerCase()
-    if (typeof right === "string") right = right.toLowerCase()
-    if (left > right) return sortAsc ? 1 : -1
-    if (left < right) return sortAsc ? -1 : 1
+    const comparison = typeof left === "number" && typeof right === "number"
+      ? left - right
+      : String(left).localeCompare(String(right), undefined, { sensitivity: "base", numeric: true })
+    if (comparison !== 0) return sortAsc ? comparison : -comparison
     return String(first.ticket_number).localeCompare(String(second.ticket_number))
   })
 }
@@ -149,6 +215,10 @@ function updateActionButton(ticket) {
 
 function render() {
   const tbody = document.getElementById("tbody")
+  const departmentFilters = renderDepartmentFilters(getBaseFilteredTickets())
+  const departmentVisible = showDepartmentColumn(departmentFilters)
+  document.getElementById("departmentColumnHeader").classList.toggle("hidden", !departmentVisible)
+  document.getElementById("ticketsTable").style.minWidth = departmentVisible ? "1500px" : "1310px"
   const filtered = sortedTickets(getFilteredTickets())
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   currentPage = Math.min(currentPage, totalPages)
@@ -167,9 +237,9 @@ function render() {
   if (activeSort) activeSort.textContent = sortAsc ? "↑" : "↓"
 
   if (pageData.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="px-4 py-16 text-center">
+    tbody.innerHTML = `<tr><td colspan="${departmentVisible ? 9 : 8}" class="px-4 py-16 text-center">
       <div class="text-sm font-medium text-slate-600">No tickets found</div>
-      <div class="mt-1 text-xs text-slate-400">Try adjusting your search or status filter.</div>
+      <div class="mt-1 text-xs text-slate-400">Try adjusting your search, status, or department filter.</div>
     </td></tr>`
     return
   }
@@ -177,11 +247,14 @@ function render() {
   tbody.innerHTML = pageData.map(ticket => {
     const ticketNumber = escapeHTML(ticket.ticket_number)
     const ticketURL = `https://itsm.ai.ms.com.cn/projects/ITSM/queues/issue/${encodeURIComponent(ticket.ticket_number)}`
+    const departmentCell = departmentVisible
+      ? `<td class="px-4 py-3 align-middle text-slate-700">${escapeHTML(ticketDepartment(ticket))}</td>`
+      : ""
     return `<tr data-id="${ticketNumber}" class="transition-colors hover:bg-slate-50">
       <td class="px-4 py-3 align-middle"><a href="${ticketURL}" target="_blank" rel="noopener noreferrer" class="font-semibold text-blue-600 hover:underline">${ticketNumber}</a></td>
       <td class="px-4 py-3 align-middle"><p class="break-words leading-5 text-slate-700" title="${escapeHTML(ticket.summary)}">${escapeHTML(ticketSummaryDisplay(ticket))}</p></td>
       <td class="px-4 py-3 align-middle"><p class="truncate whitespace-nowrap leading-5 text-slate-700" title="${escapeHTML(ticketSystems(ticket))}">${escapeHTML(ticketSystemsDisplay(ticket))}</p></td>
-      <td class="px-4 py-3 align-middle text-slate-700">${escapeHTML(ticket.department || "Unassigned")}</td>
+      ${departmentCell}
       <td class="px-3 py-3 text-center align-middle text-slate-700">${escapeHTML(ticket.reporter || "—")}</td>
       <td class="px-3 py-3 text-center align-middle text-slate-700">${escapeHTML(ticket.assignee || "—")}</td>
       <td class="px-3 py-3 align-middle">${expectedDateDisplay(ticket)}</td>
@@ -192,11 +265,14 @@ function render() {
 }
 
 function renderSkeleton() {
+  const departmentCell = selectedDepartments.size === 1
+    ? ""
+    : `<td class="px-4 py-4"><div class="h-4 w-32 animate-pulse rounded bg-slate-200"></div></td>`
   const cells = `
     <td class="px-4 py-4"><div class="h-4 w-20 animate-pulse rounded bg-slate-200"></div></td>
     <td class="px-4 py-4"><div class="h-4 w-full animate-pulse rounded bg-slate-200"></div></td>
     <td class="px-4 py-4"><div class="h-4 w-36 animate-pulse rounded bg-slate-200"></div></td>
-    <td class="px-4 py-4"><div class="h-4 w-32 animate-pulse rounded bg-slate-200"></div></td>
+    ${departmentCell}
     <td class="px-3 py-4"><div class="mx-auto h-4 w-16 animate-pulse rounded bg-slate-200"></div></td>
     <td class="px-3 py-4"><div class="mx-auto h-4 w-16 animate-pulse rounded bg-slate-200"></div></td>
     <td class="px-3 py-4"><div class="h-4 w-20 animate-pulse rounded bg-slate-200"></div></td>
@@ -685,6 +761,22 @@ document.querySelectorAll("[data-status-filter]").forEach(button => {
     updateStatusButtons()
     render()
   })
+})
+document.getElementById("departmentTags").addEventListener("click", event => {
+  const allButton = event.target.closest("button[data-department-all]")
+  const departmentButton = event.target.closest("button[data-department-filter]")
+  if (!allButton && !departmentButton) return
+
+  if (allButton) {
+    selectedDepartments.clear()
+  } else {
+    const department = departmentButton.dataset.departmentFilter
+    if (selectedDepartments.size === 0) selectedDepartments.add(department)
+    else if (selectedDepartments.has(department)) selectedDepartments.delete(department)
+    else selectedDepartments.add(department)
+  }
+  currentPage = 1
+  render()
 })
 document.querySelectorAll("th[data-sort]").forEach(header => {
   header.querySelector("button").addEventListener("click", () => setSort(header.dataset.sort))
