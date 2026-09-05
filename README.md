@@ -29,9 +29,10 @@ The database configuration uses a `db_servers` array. pgx tries the servers in
 order and accepts only a writable PostgreSQL session, allowing new pool
 connections to follow a primary/standby failover.
 
-The CMDB configuration contains ticket and objects endpoints, paging/batching
-limits, the shared HTTP timeout, refresh cooldown/backoff values, and circuit
-breaker settings. QA and production examples are under `config/`.
+The CMDB configuration contains ticket and objects endpoints, the environment-specific
+ITSM ticket browse URL, paging/batching limits, the shared HTTP timeout, refresh
+cooldown/backoff values, and circuit breaker settings. QA and production examples
+are under `config/`.
 
 The service stores tickets in `secarch_tickets.tickets` within the existing
 `ai_info_db01` PostgreSQL database. CMDB fields are refreshed in place and are

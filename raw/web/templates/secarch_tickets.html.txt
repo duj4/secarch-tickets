@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js"></script>
 </head>
 
-<body class="min-h-screen bg-slate-50 text-slate-900">
+<body data-ticket-browse-url="{{ .TicketBrowseURL }}" class="min-h-screen bg-slate-50 text-slate-900">
   <main class="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
     <header class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
@@ -215,16 +215,6 @@
           <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Department</p><p id="detailDepartment" class="mt-1 break-words text-sm text-slate-700"></p></div>
           <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Reporter</p><p id="detailReporter" class="mt-1 text-sm text-slate-700"></p></div>
           <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Assignee</p><p id="detailAssignee" class="mt-1 text-sm text-slate-700"></p></div>
-          <div class="sm:col-span-2 lg:col-span-2">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Expected</p>
-            <form id="expectedDateForm" class="mt-1 flex items-center gap-2">
-              <input id="detailExpectedDate" type="date"
-                class="h-9 min-w-0 rounded-lg border border-slate-300 px-2 text-sm font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:border-transparent disabled:bg-transparent disabled:px-0">
-              <button id="expectedDateSubmitBtn" type="submit"
-                class="h-9 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Save</button>
-            </form>
-            <p id="expectedDateError" class="mt-1 hidden text-xs text-red-600"></p>
-          </div>
           <div id="detailClosedRow" class="hidden sm:col-span-2 lg:col-span-2"><p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Closed At</p><p id="detailClosedAt" class="mt-1 text-sm text-slate-700"></p></div>
         </section>
 
@@ -234,6 +224,17 @@
         </section>
 
         <section id="updatesSection" class="mt-6 border-t border-slate-200 pt-5" aria-labelledby="updatesTitle">
+          <div class="mb-6">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Expected</p>
+            <form id="expectedDateForm" class="mt-1 flex items-center gap-2">
+              <input id="detailExpectedDate" type="date"
+                class="h-9 min-w-0 rounded-lg border border-slate-300 px-2 text-sm font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:border-transparent disabled:bg-transparent disabled:px-0">
+              <button id="expectedDateSubmitBtn" type="submit"
+                class="h-9 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Save</button>
+            </form>
+            <p id="expectedDateError" class="mt-1 hidden text-xs text-red-600"></p>
+          </div>
+
           <div class="mb-4 flex items-center justify-between">
             <h3 id="updatesTitle" class="font-semibold">Updates</h3>
             <span id="updatesMeta" class="text-xs text-slate-400"></span>
@@ -250,8 +251,8 @@
                 <p id="updateError" class="hidden text-sm text-red-600"></p>
                 <span id="updateCounter" class="text-xs text-slate-400">0 / 500</span>
               </div>
-              <button id="updateSubmitBtn" type="submit"
-                class="h-9 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Add Update</button>
+              <button id="updateSubmitBtn" type="button"
+                class="h-10 touch-manipulation rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Add Update</button>
             </div>
           </form>
         </section>

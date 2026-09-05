@@ -1,4 +1,5 @@
 const UPDATE_MAX_LENGTH = 500
+const ticketBrowseURL = document.body.dataset.ticketBrowseUrl.replace(/\/+$/, "")
 
 let allData = []
 let currentPage = 1
@@ -8,6 +9,7 @@ let sortAsc = true
 let statusFilter = "open"
 let selectedDepartments = new Set()
 let activeTicketNumber = ""
+let updateSubmitInFlight = false
 let refreshInFlight = false
 let currentSyncStatus = null
 let syncNetworkError = false
@@ -16,7 +18,7 @@ let retryTimer = null
 let statisticsRequestID = 0
 
 const updateIcon = `
-  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+  <svg class="pointer-events-none h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
     <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
     <path d="M8 9h8M8 13h5" />
   </svg>`
@@ -75,6 +77,10 @@ function ticketSystemsDisplay(ticket) {
 function ticketSummaryDisplay(ticket) {
   const summary = String(ticket.summary || "").trim()
   return summary.replace(/^SecDesign Case Review\s*-\s*Ad[\s-]*hoc\s*-\s*/i, "").trim() || summary || "—"
+}
+
+function ticketLink(ticketNumber) {
+  return `${ticketBrowseURL}/${encodeURIComponent(ticketNumber)}`
 }
 
 function ticketDepartment(ticket) {
@@ -203,11 +209,11 @@ function statusBadge(ticket) {
 function updateActionButton(ticket) {
   const count = Number(ticket.update_count || 0)
   const badge = count > 0
-    ? `<span class="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-600 px-1 text-[10px] font-bold leading-none text-white">${count}</span>`
+    ? `<span class="pointer-events-none absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-600 px-1 text-[10px] font-bold leading-none text-white">${count}</span>`
     : ""
   return `
     <button type="button" data-action="view" data-ticket="${escapeHTML(ticket.ticket_number)}"
-      class="relative flex h-8 w-8 items-center justify-center rounded-lg text-violet-600 transition hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
+      class="relative flex h-10 w-10 touch-manipulation items-center justify-center rounded-lg text-violet-600 transition hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
       aria-label="View ${escapeHTML(ticket.ticket_number)}" title="View">
       ${updateIcon}${badge}
     </button>`
@@ -246,7 +252,7 @@ function render() {
 
   tbody.innerHTML = pageData.map(ticket => {
     const ticketNumber = escapeHTML(ticket.ticket_number)
-    const ticketURL = `https://itsm.ai.ms.com.cn/projects/ITSM/queues/issue/${encodeURIComponent(ticket.ticket_number)}`
+    const ticketURL = ticketLink(ticket.ticket_number)
     const departmentCell = departmentVisible
       ? `<td class="px-4 py-3 align-middle text-slate-700">${escapeHTML(ticketDepartment(ticket))}</td>`
       : ""
@@ -431,7 +437,7 @@ function setSubmitLoading(buttonID, loading, loadingText, normalText) {
 function populateTicketDetails(ticket) {
   const link = document.getElementById("detailTicketLink")
   link.textContent = ticket.ticket_number
-  link.href = `https://itsm.ai.ms.com.cn/projects/ITSM/queues/issue/${encodeURIComponent(ticket.ticket_number)}`
+  link.href = ticketLink(ticket.ticket_number)
   const isClosed = Boolean(ticket.ticket_closed_at)
   const status = document.getElementById("detailStatus")
   status.textContent = isClosed ? "Closed" : "Open"
@@ -521,11 +527,13 @@ function updateCharacterCounter() {
 
 async function addTicketUpdate(event) {
   event.preventDefault()
+  if (updateSubmitInFlight) return
   const content = document.getElementById("updateContent").value.trim()
   const length = Array.from(content).length
   showInlineError("updateError", "")
   if (!content) return showInlineError("updateError", "Update content is required.")
   if (length > UPDATE_MAX_LENGTH) return showInlineError("updateError", `Update must be ${UPDATE_MAX_LENGTH} characters or fewer.`)
+  updateSubmitInFlight = true
   setSubmitLoading("updateSubmitBtn", true, "Adding...", "Add Update")
   try {
     const response = await fetch(`/api/tickets/${encodeURIComponent(activeTicketNumber)}/updates`, {
@@ -547,6 +555,7 @@ async function addTicketUpdate(event) {
     console.error(error)
     showInlineError("updateError", "Network error. Please try again.")
   } finally {
+    updateSubmitInFlight = false
     setSubmitLoading("updateSubmitBtn", false, "Adding...", "Add Update")
   }
 }
@@ -794,12 +803,15 @@ document.getElementById("nextBtn").addEventListener("click", () => {
   if (currentPage < totalPages) { currentPage += 1; render() }
 })
 document.getElementById("tbody").addEventListener("click", event => {
-  const button = event.target.closest("button[data-action='view']")
-  if (button) openTicketDetails(button.dataset.ticket)
+  const target = event.target instanceof Element ? event.target : null
+  const button = target?.closest("button[data-action='view']")
+  if (!button) return
+  event.preventDefault()
+  openTicketDetails(button.dataset.ticket)
 })
 document.getElementById("refreshBtn").addEventListener("click", refreshTickets)
 document.getElementById("expectedDateForm").addEventListener("submit", updateExpectedDate)
-document.getElementById("updateForm").addEventListener("submit", addTicketUpdate)
+document.getElementById("updateSubmitBtn").addEventListener("click", addTicketUpdate)
 document.getElementById("updateContent").addEventListener("input", updateCharacterCounter)
 document.querySelectorAll("[data-close-modal]").forEach(button => {
   button.addEventListener("click", () => closeModal(button.dataset.closeModal))
