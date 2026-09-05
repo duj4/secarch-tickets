@@ -19,6 +19,7 @@ const (
 	systemSchemaName     = "IT Asset"
 	systemObjectType     = "System"
 	systemDepartmentAttr = "Technology Owning Super Department"
+	unassignedDepartment = "Unassigned"
 )
 
 type systemObjectsResponse struct {
@@ -147,7 +148,7 @@ func (c *Client) resolveDepartmentBatch(ctx context.Context, keys []string, refe
 		if key == "" {
 			continue
 		}
-		department, err := systemObjectDepartment(object)
+		department, err := systemObjectDepartment(object, key)
 		if err != nil {
 			return nil, fmt.Errorf("read %s for %s: %w", systemDepartmentAttr, key, err)
 		}
@@ -200,20 +201,26 @@ func (c *Client) resolveDepartmentByLabel(ctx context.Context, key, label string
 	if len(objects) > 1 {
 		return "", fmt.Errorf("CMDB objects API returned %d Systems with name %q", len(objects), label)
 	}
-	department, err := systemObjectDepartment(objects[0])
+	department, err := systemObjectDepartment(objects[0], key)
 	if err != nil {
 		return "", fmt.Errorf("read %s for %s found by name %q: %w", systemDepartmentAttr, key, label, err)
 	}
 	return department, nil
 }
 
-func systemObjectDepartment(object systemObject) (string, error) {
+func systemObjectDepartment(object systemObject, systemKey string) (string, error) {
 	department, err := objectAttributeString(object.Attrs[systemDepartmentAttr])
 	if err != nil {
 		return "", err
 	}
 	if department == "" {
-		return "", fmt.Errorf("attribute is empty")
+		logger.Warn(
+			"CMDB System has no owning super department; assigning fallback category",
+			"system_key", systemKey,
+			"system_name", object.Label,
+			"department", unassignedDepartment,
+		)
+		return unassignedDepartment, nil
 	}
 	return department, nil
 }
@@ -315,6 +322,9 @@ func objectAttributeString(raw json.RawMessage) (string, error) {
 	}
 	var values []string
 	if err := json.Unmarshal(raw, &values); err == nil {
+		if len(values) == 0 {
+			return "", nil
+		}
 		if len(values) != 1 {
 			return "", fmt.Errorf("expected one value, got %d", len(values))
 		}
