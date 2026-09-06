@@ -1,0 +1,19 @@
+LC_ALL=C perl -ne '
+BEGIN { binmode STDIN; }
+
+while (/([\x00-\x08\x0B\x0C\x0E-\x1F])/g) {
+    my $v = ord($1);
+    $count{$v}++;
+    if ($shown < 20) {
+        printf "line=%d byte=0x%02X\n", $., $v;
+        $shown++;
+    }
+}
+
+END {
+    print "---- summary ----\n";
+    for my $v (sort {$a <=> $b} keys %count) {
+        printf "0x%02X=%d\n", $v, $count{$v};
+    }
+}
+' "${WORK}/entities.xml"
