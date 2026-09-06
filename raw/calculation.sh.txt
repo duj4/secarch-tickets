@@ -1,0 +1,16 @@
+tar -tvzf prod_restore.tar.gz | awk '
+{
+    size=$3
+    path=$6
+    split(path,a,"/")
+    top=a[1]
+
+    total += size
+    sum[top] += size
+}
+END {
+    for (k in sum)
+        printf "%-20s %.2f GiB\n", k, sum[k]/1024/1024/1024
+
+    printf "%-20s %.2f GiB\n", "TOTAL", total/1024/1024/1024
+}'
