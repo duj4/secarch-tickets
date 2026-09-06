@@ -1,0 +1,28 @@
+curl -sS \
+  'https://opensearch-itsm-qa-internal.srv.ms.com.cn:9200/jira-issues-20260901100821/_mapping' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_jsm_qa.pem \
+  --key itsm_jsm_qa.key \
+| jq '
+  def count_mapping:
+    if type != "object" then 0
+    else
+      (
+        if has("properties") then
+          [.properties | to_entries[] |
+            1 + (.value | count_mapping)
+          ] | add // 0
+        else 0 end
+      )
+      +
+      (
+        if has("fields") then
+          (.fields | length)
+        else 0 end
+      )
+    end;
+
+  to_entries[]
+  | .value.mappings
+  | count_mapping
+'
