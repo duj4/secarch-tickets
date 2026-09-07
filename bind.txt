@@ -1,0 +1,14 @@
+awk -F'|' '
+NR==FNR {
+    missing[$0]=1
+    next
+}
+{
+    key=$1 "|" $3
+    if (key in missing)
+        print $1 "|" $2 "|" $3
+}
+' \
+/tmp/missing_ao_fk.txt \
+/tmp/prod_ao_fk_meta.txt \
+> /tmp/missing_ao_fk_meta.txt
