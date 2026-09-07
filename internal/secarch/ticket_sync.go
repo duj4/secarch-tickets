@@ -251,11 +251,11 @@ func (s *TicketService) syncTickets(ctx context.Context, openOnly, resolveAllSys
 				missing = append(missing, key)
 			}
 		}
-		closed, err := s.confirmClosedTickets(ctx, missing)
+		tracked, err := s.fetchMissingTrackedTickets(ctx, missing)
 		if err != nil {
 			return 0, err
 		}
-		tickets = append(tickets, closed...)
+		tickets = append(tickets, tracked...)
 	}
 
 	if err := s.attachDepartments(ctx, tickets, knownDepartments, resolveAllSystems); err != nil {
@@ -268,12 +268,15 @@ func (s *TicketService) syncTickets(ctx context.Context, openOnly, resolveAllSys
 	return updatedCount, nil
 }
 
-func (s *TicketService) confirmClosedTickets(ctx context.Context, candidates []string) ([]*cmdb.Ticket, error) {
+// fetchMissingTrackedTickets refreshes locally tracked Open tickets that were
+// absent from the broad Open-ticket query. The exact lookup may show that a
+// ticket is either still Open or now Closed; both results must be synchronized.
+func (s *TicketService) fetchMissingTrackedTickets(ctx context.Context, candidates []string) ([]*cmdb.Ticket, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
 	sort.Strings(candidates)
-	closed := make([]*cmdb.Ticket, 0)
+	tracked := make([]*cmdb.Ticket, 0, len(candidates))
 	for start := 0; start < len(candidates); start += s.policy.TicketKeyBatchSize {
 		end := min(start+s.policy.TicketKeyBatchSize, len(candidates))
 		jql, err := cmdb.TicketKeysJQL(candidates[start:end])
@@ -282,15 +285,11 @@ func (s *TicketService) confirmClosedTickets(ctx context.Context, candidates []s
 		}
 		results, err := s.cmdbClient.ListTickets(ctx, jql)
 		if err != nil {
-			return nil, fmt.Errorf("confirm Closed tickets: %w", err)
+			return nil, fmt.Errorf("refresh missing tracked tickets: %w", err)
 		}
-		for _, ticket := range results {
-			if ticket.TicketClosedAt != nil {
-				closed = append(closed, ticket)
-			}
-		}
+		tracked = append(tracked, results...)
 	}
-	return closed, nil
+	return tracked, nil
 }
 
 func (s *TicketService) attachDepartments(ctx context.Context, tickets []*cmdb.Ticket, known map[string]string, resolveAll bool) error {
