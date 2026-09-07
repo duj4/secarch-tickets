@@ -1,0 +1,24 @@
+SELECT count(*) AS ao_fk_count
+FROM pg_constraint con
+JOIN pg_class c
+  ON c.oid = con.conrelid
+JOIN pg_namespace n
+  ON n.oid = c.relnamespace
+WHERE con.contype = 'f'
+  AND n.nspname = 'public'
+  AND c.relname LIKE 'AO\_%' ESCAPE '\';
+
+
+SELECT count(*) AS unvalidated_ao_fk
+FROM pg_constraint con
+JOIN pg_class c
+  ON c.oid = con.conrelid
+JOIN pg_namespace n
+  ON n.oid = c.relnamespace
+WHERE con.contype = 'f'
+  AND NOT con.convalidated
+  AND n.nspname = 'public'
+  AND c.relname LIKE 'AO\_%' ESCAPE '\';
+
+
+
