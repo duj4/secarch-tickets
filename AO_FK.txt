@@ -1,0 +1,12 @@
+SELECT
+    c.relname || '|' ||
+    pg_get_constraintdef(con.oid, true)
+FROM pg_constraint con
+JOIN pg_class c
+  ON c.oid = con.conrelid
+JOIN pg_namespace n
+  ON n.oid = c.relnamespace
+WHERE con.contype = 'f'
+  AND n.nspname = 'public'
+  AND c.relname LIKE 'AO\_%' ESCAPE '\'
+ORDER BY 1;

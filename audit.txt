@@ -1,0 +1,68 @@
+CREATE TEMP TABLE ao_sequence_audit (
+    table_name     text,
+    column_name    text,
+    sequence_name  text,
+    max_value      bigint,
+    last_value     bigint,
+    is_called      boolean
+);
+
+DO $$
+DECLARE
+    r record;
+    v_max bigint;
+    v_last bigint;
+    v_called boolean;
+BEGIN
+    FOR r IN
+        SELECT
+            nt.nspname AS table_schema,
+            t.relname  AS table_name,
+            a.attname  AS column_name,
+            ns.nspname AS sequence_schema,
+            s.relname  AS sequence_name
+        FROM pg_class s
+        JOIN pg_namespace ns
+          ON ns.oid = s.relnamespace
+        JOIN pg_depend d
+          ON d.objid = s.oid
+         AND d.classid = 'pg_class'::regclass
+         AND d.refclassid = 'pg_class'::regclass
+         AND d.deptype IN ('a','i')
+        JOIN pg_class t
+          ON t.oid = d.refobjid
+        JOIN pg_namespace nt
+          ON nt.oid = t.relnamespace
+        JOIN pg_attribute a
+          ON a.attrelid = t.oid
+         AND a.attnum = d.refobjsubid
+        WHERE s.relkind = 'S'
+          AND nt.nspname = 'public'
+          AND t.relname LIKE 'AO\_%' ESCAPE '\'
+    LOOP
+        EXECUTE format(
+            'SELECT max(%I)::bigint FROM %I.%I',
+            r.column_name,
+            r.table_schema,
+            r.table_name
+        )
+        INTO v_max;
+
+        EXECUTE format(
+            'SELECT last_value::bigint, is_called FROM %I.%I',
+            r.sequence_schema,
+            r.sequence_name
+        )
+        INTO v_last, v_called;
+
+        INSERT INTO ao_sequence_audit
+        VALUES (
+            r.table_name,
+            r.column_name,
+            format('%I.%I', r.sequence_schema, r.sequence_name),
+            v_max,
+            v_last,
+            v_called
+        );
+    END LOOP;
+END $$;

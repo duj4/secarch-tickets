@@ -1,0 +1,7 @@
+SELECT count(*)
+FROM ao_sequence_audit
+WHERE max_value IS NOT NULL
+  AND (
+      last_value < max_value
+      OR (last_value = max_value AND NOT is_called)
+  );
