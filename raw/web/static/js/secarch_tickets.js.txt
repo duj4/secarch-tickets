@@ -68,8 +68,15 @@ function ticketSystems(ticket) {
 
 function ticketSystemsDisplay(ticket) {
   const systems = Array.isArray(ticket.cmdb_system_name) ? ticket.cmdb_system_name : [ticket.cmdb_system_name]
+  const systemKeySuffix = `(${String(ticket.cmdb_system_key || "").trim()})`
   return systems
-    .map(system => String(system || "").replace(/\s*\(.*$/, "").trim())
+    .map(system => {
+      const value = String(system || "").trim()
+      if (systemKeySuffix !== "()" && value.toLowerCase().endsWith(systemKeySuffix.toLowerCase())) {
+        return value.slice(0, -systemKeySuffix.length).trim()
+      }
+      return value
+    })
     .filter(Boolean)
     .join(", ") || "—"
 }
