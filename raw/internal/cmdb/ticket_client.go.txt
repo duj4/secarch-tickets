@@ -26,6 +26,18 @@ var (
 	systemKeyPattern  = regexp.MustCompile(`(?i)^(.+?)\s*\(([a-z][a-z0-9_-]*-\d+)\)\s*$`)
 )
 
+type ticketAPIStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *ticketAPIStatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("CMDB ticket API returned status %d", e.StatusCode)
+	}
+	return fmt.Sprintf("CMDB ticket API returned status %d: %s", e.StatusCode, e.Body)
+}
+
 // SecArchTicketJQL returns the common request-type filter. When openOnly is
 // true, Closed tickets are excluded from the queue query.
 func SecArchTicketJQL(openOnly bool) string {
@@ -62,8 +74,13 @@ func (c *Client) GetTicket(ctx context.Context, ticketNumber string) (*Ticket, e
 	if !issueKeyPattern.MatchString(ticketNumber) {
 		return nil, fmt.Errorf("invalid ticket key %q", ticketNumber)
 	}
-	resp, err := c.fetchTicketByKey(ctx, strings.ToUpper(ticketNumber))
+	ticketNumber = strings.ToUpper(ticketNumber)
+	resp, err := c.fetchTicketByKey(ctx, ticketNumber)
 	if err != nil {
+		var statusErr *ticketAPIStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %s", ErrTicketNotFound, ticketNumber)
+		}
 		return nil, err
 	}
 	if len(resp.Issues) == 0 {
@@ -165,7 +182,10 @@ func (c *Client) fetchTicketRequest(ctx context.Context, requestURL string) (*Ti
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("CMDB ticket API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &ticketAPIStatusError{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(body)),
+		}
 	}
 
 	var out TicketQueueAPIResponse

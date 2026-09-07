@@ -39,32 +39,46 @@ type ticketOwnershipCandidate struct {
 }
 
 type ticketOwnershipRepair struct {
-	TicketNumber   string
-	CMDBSystemName []string
-	CMDBSystemKey  string
-	Department     string
+	TicketNumber           string
+	ExpectedCMDBSystemName []string
+	ExpectedCMDBSystemKey  string
+	ExpectedDepartment     string
+	CMDBSystemName         []string
+	CMDBSystemKey          string
+	Department             string
 }
 
-// UpsertTickets atomically writes a complete prepared CMDB result. The default
-// expected date is only used for inserts; user-maintained dates survive every
-// CMDB refresh. The returned count includes only rows actually inserted or
-// changed; PostgreSQL reports zero rows for an unchanged ON CONFLICT update.
-func UpsertTickets(ctx context.Context, pool *pgxpool.Pool, tickets []*cmdb.Ticket, defaultExpectedDate time.Time) (int, error) {
+type ticketSyncPersistenceResult struct {
+	UpdatedCount         int
+	AppliedRepairCount   int
+	SkippedRepairTickets []string
+}
+
+// persistTicketSync commits regular ticket upserts and ownership repairs in
+// one transaction. The default expected date is only used for inserts, and
+// user-maintained dates survive every CMDB refresh.
+func persistTicketSync(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	tickets []*cmdb.Ticket,
+	defaultExpectedDate time.Time,
+	repairs []ticketOwnershipRepair,
+) (ticketSyncPersistenceResult, error) {
 	data, err := db.SQLFiles.ReadFile("sql/upsert_secarch_ticket.sql")
 	if err != nil {
-		return 0, fmt.Errorf("read upsert SQL: %w", err)
+		return ticketSyncPersistenceResult{}, fmt.Errorf("read upsert SQL: %w", err)
 	}
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("begin ticket upsert: %w", err)
+		return ticketSyncPersistenceResult{}, fmt.Errorf("begin ticket synchronization: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	updatedCount := 0
+	updatedTickets := make(map[string]struct{}, len(tickets)+len(repairs))
 	for _, ticket := range tickets {
 		if ticket == nil || strings.TrimSpace(ticket.TicketNumber) == "" {
-			return 0, fmt.Errorf("cannot upsert ticket with an empty key")
+			return ticketSyncPersistenceResult{}, fmt.Errorf("cannot upsert ticket with an empty key")
 		}
 		commandTag, err := tx.Exec(
 			ctx,
@@ -81,15 +95,55 @@ func UpsertTickets(ctx context.Context, pool *pgxpool.Pool, tickets []*cmdb.Tick
 			defaultExpectedDate,
 		)
 		if err != nil {
-			return 0, fmt.Errorf("upsert ticket %s: %w", ticket.TicketNumber, err)
+			return ticketSyncPersistenceResult{}, fmt.Errorf("upsert ticket %s: %w", ticket.TicketNumber, err)
 		}
-		updatedCount += int(commandTag.RowsAffected())
+		if commandTag.RowsAffected() > 0 {
+			updatedTickets[ticket.TicketNumber] = struct{}{}
+		}
+	}
+
+	result := ticketSyncPersistenceResult{}
+	for _, repair := range repairs {
+		commandTag, err := tx.Exec(ctx, `
+			UPDATE secarch_tickets.tickets
+			SET cmdb_system_name = $2,
+			    cmdb_system_key = $3,
+			    department = $4,
+			    updated_at = NOW()
+			WHERE ticket_number = $1
+			  AND cmdb_system_name IS NOT DISTINCT FROM $5
+			  AND cmdb_system_key IS NOT DISTINCT FROM $6
+			  AND department IS NOT DISTINCT FROM $7
+			  AND (
+			      cmdb_system_name IS DISTINCT FROM $2 OR
+			      cmdb_system_key IS DISTINCT FROM $3 OR
+			      department IS DISTINCT FROM $4
+			  )
+		`,
+			repair.TicketNumber,
+			repair.CMDBSystemName,
+			repair.CMDBSystemKey,
+			repair.Department,
+			repair.ExpectedCMDBSystemName,
+			repair.ExpectedCMDBSystemKey,
+			repair.ExpectedDepartment,
+		)
+		if err != nil {
+			return ticketSyncPersistenceResult{}, fmt.Errorf("repair ticket %s ownership: %w", repair.TicketNumber, err)
+		}
+		if commandTag.RowsAffected() == 0 {
+			result.SkippedRepairTickets = append(result.SkippedRepairTickets, repair.TicketNumber)
+			continue
+		}
+		result.AppliedRepairCount++
+		updatedTickets[repair.TicketNumber] = struct{}{}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit ticket upsert: %w", err)
+		return ticketSyncPersistenceResult{}, fmt.Errorf("commit ticket synchronization: %w", err)
 	}
-	return updatedCount, nil
+	result.UpdatedCount = len(updatedTickets)
+	return result, nil
 }
 
 // ListTickets returns all stored tickets from PostgreSQL.
@@ -236,57 +290,6 @@ func listTicketOwnershipCandidates(ctx context.Context, pool *pgxpool.Pool, open
 		return nil, fmt.Errorf("iterate ticket ownership repair candidates: %w", err)
 	}
 	return candidates, nil
-}
-
-// applyTicketOwnershipRepairs updates only CMDB ownership columns, preserving
-// all user-maintained and unrelated ticket data.
-func applyTicketOwnershipRepairs(ctx context.Context, pool *pgxpool.Pool, repairs []ticketOwnershipRepair) (int, error) {
-	if len(repairs) == 0 {
-		return 0, nil
-	}
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin ticket ownership repair: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	updatedCount := 0
-	for _, repair := range repairs {
-		commandTag, err := tx.Exec(ctx, `
-			UPDATE secarch_tickets.tickets
-			SET cmdb_system_name = $2,
-			    cmdb_system_key = $3,
-			    department = $4,
-			    updated_at = NOW()
-			WHERE ticket_number = $1
-			  AND (
-			      BTRIM(cmdb_system_key) = '' OR
-			      BTRIM(department) = '' OR
-			      department = $5
-			  )
-			  AND (
-			      cmdb_system_name IS DISTINCT FROM $2 OR
-			      cmdb_system_key IS DISTINCT FROM $3 OR
-			      department IS DISTINCT FROM $4
-			  )
-		`,
-			repair.TicketNumber,
-			repair.CMDBSystemName,
-			repair.CMDBSystemKey,
-			repair.Department,
-			cmdb.UnassignedDepartment,
-		)
-		if err != nil {
-			return 0, fmt.Errorf("repair ticket %s ownership: %w", repair.TicketNumber, err)
-		}
-		updatedCount += int(commandTag.RowsAffected())
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit ticket ownership repair: %w", err)
-	}
-	return updatedCount, nil
 }
 
 // CountClosedTickets returns tickets resolved in [start, endExclusive).

@@ -271,23 +271,42 @@ func (s *TicketService) syncTickets(ctx context.Context, openOnly, resolveAllSys
 	if err := s.attachDepartments(ctx, tickets, knownDepartments, resolveAllSystems); err != nil {
 		return 0, err
 	}
-	updatedCount, err := UpsertTickets(ctx, s.pool, tickets, defaultExpectedDate(s.now()))
+	repairs, err := s.prepareStoredTicketOwnershipRepairs(ctx, ownershipCandidates)
 	if err != nil {
 		return 0, err
 	}
-	repairedCount, err := s.repairStoredTicketOwnership(ctx, ownershipCandidates)
+	persistence, err := persistTicketSync(
+		ctx,
+		s.pool,
+		tickets,
+		defaultExpectedDate(s.now()),
+		repairs,
+	)
 	if err != nil {
 		return 0, err
 	}
-	return updatedCount + repairedCount, nil
+	for _, ticketNumber := range persistence.SkippedRepairTickets {
+		logger.Warn(
+			"stored ticket ownership repair skipped because ownership changed or is already current",
+			"ticket_number", ticketNumber,
+		)
+	}
+	logger.Info(
+		"stored ticket ownership repair completed",
+		"candidate_count", len(ownershipCandidates),
+		"prepared_count", len(repairs),
+		"applied_count", persistence.AppliedRepairCount,
+		"skipped_count", len(persistence.SkippedRepairTickets),
+	)
+	return persistence.UpdatedCount, nil
 }
 
-// repairStoredTicketOwnership self-heals rows created before System keys were
-// normalized. It uses the full System value already stored with the ticket, so
-// it does not depend on the ticket queue API returning the historical ticket.
-func (s *TicketService) repairStoredTicketOwnership(ctx context.Context, candidates []ticketOwnershipCandidate) (int, error) {
+// prepareStoredTicketOwnershipRepairs self-heals rows created before System
+// keys were normalized. It uses the full System value already stored with the
+// ticket, so it does not depend on the ticket queue API returning that ticket.
+func (s *TicketService) prepareStoredTicketOwnershipRepairs(ctx context.Context, candidates []ticketOwnershipCandidate) ([]ticketOwnershipRepair, error) {
 	if len(candidates) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	type preparedRepair struct {
@@ -313,29 +332,40 @@ func (s *TicketService) repairStoredTicketOwnership(ctx context.Context, candida
 		references = append(references, system)
 	}
 	if len(prepared) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
-	departments, err := s.cmdbClient.ResolveDepartments(ctx, references)
+	departments, err := s.resolveDepartmentsIsolated(ctx, references)
 	if err != nil {
-		return 0, fmt.Errorf("resolve stored ticket System ownership: %w", err)
+		return nil, fmt.Errorf("resolve stored ticket System ownership: %w", err)
 	}
 
 	repairs := make([]ticketOwnershipRepair, 0, len(prepared))
 	for _, item := range prepared {
 		department := strings.TrimSpace(departments[item.system.Key])
 		if department == "" {
-			return 0, fmt.Errorf("CMDB returned no Department for stored ticket %s System %s", item.candidate.TicketNumber, item.system.Key)
+			logger.Warn(
+				"stored ticket ownership repair skipped because System could not be resolved",
+				"ticket_number", item.candidate.TicketNumber,
+				"system_key", item.system.Key,
+			)
+			continue
 		}
 		systemNames := item.candidate.CMDBSystemName
 		if item.system.Name != "" {
 			systemNames = []string{item.system.Name}
 		}
+		if ticketOwnershipMatches(item.candidate, systemNames, item.system.Key, department) {
+			continue
+		}
 		repairs = append(repairs, ticketOwnershipRepair{
-			TicketNumber:   item.candidate.TicketNumber,
-			CMDBSystemName: systemNames,
-			CMDBSystemKey:  item.system.Key,
-			Department:     department,
+			TicketNumber:           item.candidate.TicketNumber,
+			ExpectedCMDBSystemName: item.candidate.CMDBSystemName,
+			ExpectedCMDBSystemKey:  item.candidate.CMDBSystemKey,
+			ExpectedDepartment:     item.candidate.Department,
+			CMDBSystemName:         systemNames,
+			CMDBSystemKey:          item.system.Key,
+			Department:             department,
 		})
 		logger.Info(
 			"prepared stored ticket ownership repair",
@@ -345,18 +375,85 @@ func (s *TicketService) repairStoredTicketOwnership(ctx context.Context, candida
 			"department", department,
 		)
 	}
+	return repairs, nil
+}
 
-	updatedCount, err := applyTicketOwnershipRepairs(ctx, s.pool, repairs)
-	if err != nil {
-		return 0, err
+func (s *TicketService) resolveDepartmentsIsolated(ctx context.Context, references []cmdb.SystemReference) (map[string]string, error) {
+	unique := make(map[string]cmdb.SystemReference, len(references))
+	for _, reference := range references {
+		if existing, ok := unique[reference.Key]; !ok || existing.Name == "" {
+			unique[reference.Key] = reference
+		}
 	}
-	logger.Info(
-		"stored ticket ownership repair completed",
-		"candidate_count", len(candidates),
-		"prepared_count", len(repairs),
-		"updated_count", updatedCount,
-	)
-	return updatedCount, nil
+	keys := make([]string, 0, len(unique))
+	for key := range unique {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	ordered := make([]cmdb.SystemReference, 0, len(keys))
+	for _, key := range keys {
+		ordered = append(ordered, unique[key])
+	}
+
+	resolved := make(map[string]string, len(ordered))
+	var resolveSubset func([]cmdb.SystemReference) error
+	resolveSubset = func(subset []cmdb.SystemReference) error {
+		if len(subset) == 0 {
+			return nil
+		}
+		departments, err := s.cmdbClient.ResolveDepartments(ctx, subset)
+		if err == nil {
+			for key, department := range departments {
+				resolved[key] = department
+			}
+			return nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if !cmdb.IsSystemResolutionDataError(err) {
+			return err
+		}
+		if len(subset) == 1 {
+			logger.Warn(
+				"CMDB System cannot be resolved from its data; affected tickets skipped",
+				"system_key", subset[0].Key,
+				"system_name", subset[0].Name,
+				"err", err,
+			)
+			return nil
+		}
+
+		logger.Warn(
+			"CMDB System data error found in batch; isolating Systems",
+			"system_count", len(subset),
+			"err", err,
+		)
+		middle := len(subset) / 2
+		if err := resolveSubset(subset[:middle]); err != nil {
+			return err
+		}
+		return resolveSubset(subset[middle:])
+	}
+	if err := resolveSubset(ordered); err != nil {
+		return nil, err
+	}
+	return resolved, nil
+}
+
+func ticketOwnershipMatches(candidate ticketOwnershipCandidate, systemNames []string, systemKey, department string) bool {
+	if candidate.CMDBSystemKey != systemKey || candidate.Department != department {
+		return false
+	}
+	if (candidate.CMDBSystemName == nil) != (systemNames == nil) || len(candidate.CMDBSystemName) != len(systemNames) {
+		return false
+	}
+	for index := range candidate.CMDBSystemName {
+		if candidate.CMDBSystemName[index] != systemNames[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func storedTicketSystemReference(candidate ticketOwnershipCandidate) (cmdb.SystemReference, error) {
@@ -414,7 +511,12 @@ func (s *TicketService) fetchMissingTrackedTickets(ctx context.Context, candidat
 		}
 		results, err := s.cmdbClient.ListTickets(ctx, jql)
 		if err != nil {
-			return nil, fmt.Errorf("refresh missing tracked tickets: %w", err)
+			logger.Warn(
+				"CMDB JQL lookup for tracked tickets failed; retrying individually by issueKey",
+				"ticket_count", end-start,
+				"err", err,
+			)
+			results = nil
 		}
 		tracked = append(tracked, results...)
 
@@ -469,9 +571,9 @@ func (s *TicketService) attachDepartments(ctx context.Context, tickets []*cmdb.T
 	for _, reference := range references {
 		toResolve = append(toResolve, reference)
 	}
-	resolved, err := s.cmdbClient.ResolveDepartments(ctx, toResolve)
+	resolved, err := s.resolveDepartmentsIsolated(ctx, toResolve)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve ticket System Departments: %w", err)
 	}
 	for _, ticket := range tickets {
 		if ticket == nil || ticket.CMDBSystemKey == "" {
