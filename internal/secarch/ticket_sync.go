@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -288,6 +289,32 @@ func (s *TicketService) fetchMissingTrackedTickets(ctx context.Context, candidat
 			return nil, fmt.Errorf("refresh missing tracked tickets: %w", err)
 		}
 		tracked = append(tracked, results...)
+
+		returned := make(map[string]struct{}, len(results))
+		for _, ticket := range results {
+			if ticket != nil {
+				returned[strings.ToUpper(strings.TrimSpace(ticket.TicketNumber))] = struct{}{}
+			}
+		}
+		for _, candidate := range candidates[start:end] {
+			candidate = strings.ToUpper(strings.TrimSpace(candidate))
+			if _, ok := returned[candidate]; ok {
+				continue
+			}
+			logger.Warn(
+				"CMDB JQL lookup omitted tracked ticket; retrying by issueKey",
+				"ticket_number", candidate,
+			)
+			ticket, err := s.cmdbClient.GetTicket(ctx, candidate)
+			if errors.Is(err, cmdb.ErrTicketNotFound) {
+				logger.Warn("CMDB no longer returns tracked ticket", "ticket_number", candidate)
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("refresh tracked ticket %s by issueKey: %w", candidate, err)
+			}
+			tracked = append(tracked, ticket)
+		}
 	}
 	return tracked, nil
 }
