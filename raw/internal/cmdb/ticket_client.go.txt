@@ -238,7 +238,7 @@ func normalizeTicket(issueKey string, issue TicketQueueAPIResponseIssue) (*Ticke
 		closedAt = &resolvedAt
 	}
 
-	system, err := ticketSystemReference(issue.CMDBSystemName)
+	system, err := ParseTicketSystemReference(issue.CMDBSystemName)
 	if err != nil {
 		return nil, fmt.Errorf("normalize CMDB System Name for %s: %w", issueKey, err)
 	}
@@ -271,7 +271,9 @@ func parseCMDBTime(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unsupported CMDB timestamp %q", value)
 }
 
-func ticketSystemReference(values []string) (SystemReference, error) {
+// ParseTicketSystemReference extracts the trailing System key while preserving
+// meaningful parentheses in the System name, such as "(China)".
+func ParseTicketSystemReference(values []string) (SystemReference, error) {
 	nonEmpty := make([]string, 0, len(values))
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {

@@ -222,10 +222,19 @@ func (s *TicketService) syncStatusLocked(now time.Time) SyncStatus {
 }
 
 func (s *TicketService) syncTickets(ctx context.Context, openOnly, resolveAllSystems bool) (int, error) {
+	ownershipCandidates, err := listTicketOwnershipCandidates(ctx, s.pool, openOnly)
+	if err != nil {
+		return 0, err
+	}
+	logger.Info(
+		"stored ticket ownership repair scan completed",
+		"open_only", openOnly,
+		"candidate_count", len(ownershipCandidates),
+	)
+
 	var openBefore []string
 	knownDepartments := make(map[string]string)
 	if openOnly {
-		var err error
 		openBefore, err = ListOpenTicketNumbers(ctx, s.pool)
 		if err != nil {
 			return 0, err
@@ -266,7 +275,126 @@ func (s *TicketService) syncTickets(ctx context.Context, openOnly, resolveAllSys
 	if err != nil {
 		return 0, err
 	}
+	repairedCount, err := s.repairStoredTicketOwnership(ctx, ownershipCandidates)
+	if err != nil {
+		return 0, err
+	}
+	return updatedCount + repairedCount, nil
+}
+
+// repairStoredTicketOwnership self-heals rows created before System keys were
+// normalized. It uses the full System value already stored with the ticket, so
+// it does not depend on the ticket queue API returning the historical ticket.
+func (s *TicketService) repairStoredTicketOwnership(ctx context.Context, candidates []ticketOwnershipCandidate) (int, error) {
+	if len(candidates) == 0 {
+		return 0, nil
+	}
+
+	type preparedRepair struct {
+		candidate ticketOwnershipCandidate
+		system    cmdb.SystemReference
+	}
+	prepared := make([]preparedRepair, 0, len(candidates))
+	references := make([]cmdb.SystemReference, 0, len(candidates))
+	for _, candidate := range candidates {
+		system, err := storedTicketSystemReference(candidate)
+		if err != nil {
+			logger.Warn(
+				"stored ticket System cannot be normalized; ownership repair skipped",
+				"ticket_number", candidate.TicketNumber,
+				"err", err,
+			)
+			continue
+		}
+		if system.Key == "" {
+			continue
+		}
+		prepared = append(prepared, preparedRepair{candidate: candidate, system: system})
+		references = append(references, system)
+	}
+	if len(prepared) == 0 {
+		return 0, nil
+	}
+
+	departments, err := s.cmdbClient.ResolveDepartments(ctx, references)
+	if err != nil {
+		return 0, fmt.Errorf("resolve stored ticket System ownership: %w", err)
+	}
+
+	repairs := make([]ticketOwnershipRepair, 0, len(prepared))
+	for _, item := range prepared {
+		department := strings.TrimSpace(departments[item.system.Key])
+		if department == "" {
+			return 0, fmt.Errorf("CMDB returned no Department for stored ticket %s System %s", item.candidate.TicketNumber, item.system.Key)
+		}
+		systemNames := item.candidate.CMDBSystemName
+		if item.system.Name != "" {
+			systemNames = []string{item.system.Name}
+		}
+		repairs = append(repairs, ticketOwnershipRepair{
+			TicketNumber:   item.candidate.TicketNumber,
+			CMDBSystemName: systemNames,
+			CMDBSystemKey:  item.system.Key,
+			Department:     department,
+		})
+		logger.Info(
+			"prepared stored ticket ownership repair",
+			"ticket_number", item.candidate.TicketNumber,
+			"system_key", item.system.Key,
+			"system_name", item.system.Name,
+			"department", department,
+		)
+	}
+
+	updatedCount, err := applyTicketOwnershipRepairs(ctx, s.pool, repairs)
+	if err != nil {
+		return 0, err
+	}
+	logger.Info(
+		"stored ticket ownership repair completed",
+		"candidate_count", len(candidates),
+		"prepared_count", len(repairs),
+		"updated_count", updatedCount,
+	)
 	return updatedCount, nil
+}
+
+func storedTicketSystemReference(candidate ticketOwnershipCandidate) (cmdb.SystemReference, error) {
+	existingKey := strings.ToUpper(strings.TrimSpace(candidate.CMDBSystemKey))
+	if existingKey == "" {
+		return cmdb.ParseTicketSystemReference(candidate.CMDBSystemName)
+	}
+
+	keyReference, err := cmdb.ParseTicketSystemReference([]string{existingKey})
+	if err != nil {
+		return cmdb.SystemReference{}, fmt.Errorf("invalid stored System key %q: %w", candidate.CMDBSystemKey, err)
+	}
+	system := cmdb.SystemReference{Key: keyReference.Key}
+
+	names := make([]string, 0, len(candidate.CMDBSystemName))
+	for _, name := range candidate.CMDBSystemName {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) != 1 {
+		return system, nil
+	}
+
+	parsed, parseErr := cmdb.ParseTicketSystemReference(names)
+	if parseErr != nil {
+		system.Name = names[0]
+		return system, nil
+	}
+	if parsed.Key != "" && parsed.Key != system.Key {
+		return cmdb.SystemReference{}, fmt.Errorf(
+			"stored System key %s conflicts with key %s in display value",
+			system.Key,
+			parsed.Key,
+		)
+	}
+	system.Name = parsed.Name
+	return system, nil
 }
 
 // fetchMissingTrackedTickets refreshes locally tracked Open tickets that were
