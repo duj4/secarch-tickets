@@ -1,0 +1,29 @@
+kubectl get pod fluent-bit-tplgc \
+  -o jsonpath='{range .status.containerStatuses[*]}{.name}{"  restarts="}{.restartCount}{"  started="}{.state.running.startedAt}{"\n"}{end}'
+
+for p in fluent-bit-r7w8m fluent-bit-tplgc fluent-bit-wr6qq; do
+  echo "===== $p ====="
+  kubectl get pod "$p" \
+    -o jsonpath='{range .status.containerStatuses[*]}{.name}{"  restarts="}{.restartCount}{"  started="}{.state.running.startedAt}{"\n"}{end}'
+done
+
+BUSYBOX_IMAGE=$(kubectl get pod fluent-bit-r7w8m \
+  -o jsonpath='{.spec.containers[?(@.name=="busybox")].image}')
+
+echo "$BUSYBOX_IMAGE"
+
+kubectl debug -it pod/fluent-bit-r7w8m \
+  --image="$BUSYBOX_IMAGE" \
+  --target=fluent-bit \
+  -- sh
+
+grep -E '^(Rss|Pss|Anonymous|Private_Dirty|Shared_Clean|Swap):' \
+  /proc/1/smaps_rollup
+
+cat /proc/1/cgroup
+
+cat /proc/1/root/sys/fs/cgroup/memory.current
+
+grep -E \
+'^(anon|file|kernel|slab|slab_reclaimable|slab_unreclaimable|sock|shmem|file_mapped|file_dirty) ' \
+/proc/1/root/sys/fs/cgroup/memory.stat
