@@ -1,0 +1,26 @@
+\copy (
+    SELECT
+        i."ID",
+        i."NAME",
+        i."OBJECT_SCHEMA_ID",
+        s."NAME" AS "SCHEMA_NAME",
+        i."STATUS",
+        i."SYNCHRONIZATION",
+        i."SYNCHRONIZATION_ENABLED",
+        i."RUN_AS_USER_KEY"
+    FROM public."AO_8542F1_IFJ_IMPORT_SRC" i
+    LEFT JOIN public."AO_8542F1_IFJ_OBJ_SCHEMA" s
+      ON s."ID" = i."OBJECT_SCHEMA_ID"
+    ORDER BY s."NAME", i."NAME"
+) TO '/tmp/assets_import_before_disable.csv'
+WITH CSV HEADER;
+
+SELECT
+    "STATUS",
+    "SYNCHRONIZATION_ENABLED",
+    count(*)
+FROM public."AO_8542F1_IFJ_IMPORT_SRC"
+GROUP BY "STATUS", "SYNCHRONIZATION_ENABLED"
+ORDER BY 1,2;
+
+
