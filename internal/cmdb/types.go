@@ -18,9 +18,9 @@ type Config struct {
 	RefreshFailureBackoffMultiplier int    `json:"refresh_failure_backoff_multiplier"`
 	RefreshCircuitBreakerThreshold  int    `json:"refresh_circuit_breaker_threshold"`
 	RefreshCircuitOpenSeconds       int    `json:"refresh_circuit_open_seconds"`
-	CACertPath                      string `json:"ca_cert_path"`
-	ClientCertPath                  string `json:"client_cert_path"`
-	ClientKeyPath                   string `json:"client_key_path"`
+	CACertPath                      string `json:"-"`
+	ClientCertPath                  string `json:"-"`
+	ClientKeyPath                   string `json:"-"`
 }
 
 // Client calls the CMDB API over the configured HTTP transport.

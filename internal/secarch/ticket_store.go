@@ -146,14 +146,18 @@ func persistTicketSync(
 	return result, nil
 }
 
-// ListTickets returns all stored tickets from PostgreSQL.
-func ListTickets(ctx context.Context, pool *pgxpool.Pool) ([]StoredTicket, error) {
+// ListTickets returns the stored tickets visible to the caller.
+func ListTickets(ctx context.Context, pool *pgxpool.Pool, access TicketAccess) ([]StoredTicket, error) {
+	all, reporter, err := access.queryArguments()
+	if err != nil {
+		return nil, err
+	}
 	data, err := db.SQLFiles.ReadFile("sql/list_secarch_tickets.sql")
 	if err != nil {
 		return nil, fmt.Errorf("read list tickets SQL: %w", err)
 	}
 
-	rows, err := pool.Query(ctx, string(data))
+	rows, err := pool.Query(ctx, string(data), all, reporter)
 	if err != nil {
 		return nil, fmt.Errorf("query tickets: %w", err)
 	}
@@ -293,26 +297,35 @@ func listTicketOwnershipCandidates(ctx context.Context, pool *pgxpool.Pool, open
 }
 
 // CountClosedTickets returns tickets resolved in [start, endExclusive).
-func CountClosedTickets(ctx context.Context, pool *pgxpool.Pool, start, endExclusive time.Time) (int64, error) {
+func CountClosedTickets(ctx context.Context, pool *pgxpool.Pool, start, endExclusive time.Time, access TicketAccess) (int64, error) {
+	all, reporter, err := access.queryArguments()
+	if err != nil {
+		return 0, err
+	}
 	data, err := db.SQLFiles.ReadFile("sql/count_closed_tickets.sql")
 	if err != nil {
 		return 0, fmt.Errorf("read closed ticket count SQL: %w", err)
 	}
 	var count int64
-	if err := pool.QueryRow(ctx, string(data), start, endExclusive).Scan(&count); err != nil {
+	if err := pool.QueryRow(ctx, string(data), start, endExclusive, all, reporter).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count Closed tickets: %w", err)
 	}
 	return count, nil
 }
 
 // UpdateExpectedDate updates expected_date for a ticket.
-func UpdateExpectedDate(ctx context.Context, pool *pgxpool.Pool, ticketNumber string, expectedDate time.Time) error {
+func UpdateExpectedDate(ctx context.Context, pool *pgxpool.Pool, ticketNumber string, expectedDate time.Time, access TicketAccess) error {
+	all, reporter, err := access.queryArguments()
+	if err != nil {
+		return err
+	}
 	cmd, err := pool.Exec(ctx, `
 		UPDATE secarch_tickets.tickets
 		SET expected_date = $1,
 		    updated_at = NOW()
 		WHERE ticket_number = $2
-	`, expectedDate, ticketNumber)
+		  AND ($3::boolean OR LOWER(BTRIM(reporter)) = LOWER(BTRIM($4)))
+	`, expectedDate, ticketNumber, all, reporter)
 	if err != nil {
 		return err
 	}

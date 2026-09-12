@@ -63,3 +63,6 @@ CREATE INDEX IF NOT EXISTS tickets_open_idx
 CREATE INDEX IF NOT EXISTS tickets_closed_at_idx
     ON secarch_tickets.tickets (ticket_closed_at)
     WHERE ticket_closed_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS tickets_reporter_normalized_idx
+    ON secarch_tickets.tickets (LOWER(BTRIM(reporter)));

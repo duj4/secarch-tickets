@@ -7,6 +7,10 @@ SELECT
 FROM secarch_tickets.ticket_updates AS u
 JOIN secarch_tickets.tickets AS t ON t.id = u.ticket_id
 WHERE t.ticket_number = $1
+  AND (
+      $2::boolean
+      OR LOWER(BTRIM(t.reporter)) = LOWER(BTRIM($3))
+  )
 ORDER BY
     u.created_at DESC,
     u.id DESC;

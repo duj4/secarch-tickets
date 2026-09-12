@@ -30,7 +30,7 @@ type TicketUpdate struct {
 }
 
 // AddTicketUpdate validates and stores a local update without changing the source ticket.
-func (s *TicketService) AddTicketUpdate(ctx context.Context, ticketNumber, content string) (TicketUpdate, error) {
+func (s *TicketService) AddTicketUpdate(ctx context.Context, ticketNumber, content string, access TicketAccess) (TicketUpdate, error) {
 	ticketNumber = strings.TrimSpace(ticketNumber)
 	if ticketNumber == "" {
 		return TicketUpdate{}, ErrTicketNotFound
@@ -41,17 +41,17 @@ func (s *TicketService) AddTicketUpdate(ctx context.Context, ticketNumber, conte
 		return TicketUpdate{}, err
 	}
 
-	return createTicketUpdate(ctx, s.pool, ticketNumber, normalized)
+	return createTicketUpdate(ctx, s.pool, ticketNumber, normalized, access)
 }
 
 // ListTicketUpdates returns local updates newest first.
-func (s *TicketService) ListTicketUpdates(ctx context.Context, ticketNumber string) ([]TicketUpdate, error) {
+func (s *TicketService) ListTicketUpdates(ctx context.Context, ticketNumber string, access TicketAccess) ([]TicketUpdate, error) {
 	ticketNumber = strings.TrimSpace(ticketNumber)
 	if ticketNumber == "" {
 		return nil, ErrTicketNotFound
 	}
 
-	return listTicketUpdates(ctx, s.pool, ticketNumber)
+	return listTicketUpdates(ctx, s.pool, ticketNumber, access)
 }
 
 func normalizeTicketUpdateContent(content string) (string, error) {
@@ -66,14 +66,18 @@ func normalizeTicketUpdateContent(content string) (string, error) {
 	return content, nil
 }
 
-func createTicketUpdate(ctx context.Context, pool *pgxpool.Pool, ticketNumber, content string) (TicketUpdate, error) {
+func createTicketUpdate(ctx context.Context, pool *pgxpool.Pool, ticketNumber, content string, access TicketAccess) (TicketUpdate, error) {
+	all, reporter, err := access.queryArguments()
+	if err != nil {
+		return TicketUpdate{}, err
+	}
 	data, err := db.SQLFiles.ReadFile("sql/create_ticket_update.sql")
 	if err != nil {
 		return TicketUpdate{}, fmt.Errorf("read create ticket update sql: %w", err)
 	}
 
 	var update TicketUpdate
-	err = pool.QueryRow(ctx, string(data), ticketNumber, content).Scan(
+	err = pool.QueryRow(ctx, string(data), ticketNumber, content, all, reporter).Scan(
 		&update.ID,
 		&update.Content,
 		&update.CreatedAt,
@@ -88,12 +92,23 @@ func createTicketUpdate(ctx context.Context, pool *pgxpool.Pool, ticketNumber, c
 	return update, nil
 }
 
-func listTicketUpdates(ctx context.Context, pool *pgxpool.Pool, ticketNumber string) ([]TicketUpdate, error) {
+func listTicketUpdates(ctx context.Context, pool *pgxpool.Pool, ticketNumber string, access TicketAccess) ([]TicketUpdate, error) {
+	all, reporter, err := access.queryArguments()
+	if err != nil {
+		return nil, err
+	}
 	var exists bool
 	if err := pool.QueryRow(
 		ctx,
-		"SELECT EXISTS (SELECT 1 FROM secarch_tickets.tickets WHERE ticket_number = $1)",
+		`SELECT EXISTS (
+			SELECT 1
+			FROM secarch_tickets.tickets
+			WHERE ticket_number = $1
+			  AND ($2::boolean OR LOWER(BTRIM(reporter)) = LOWER(BTRIM($3)))
+		)`,
 		ticketNumber,
+		all,
+		reporter,
 	).Scan(&exists); err != nil {
 		return nil, fmt.Errorf("check ticket %s: %w", ticketNumber, err)
 	}
@@ -106,7 +121,7 @@ func listTicketUpdates(ctx context.Context, pool *pgxpool.Pool, ticketNumber str
 		return nil, fmt.Errorf("read list ticket updates sql: %w", err)
 	}
 
-	rows, err := pool.Query(ctx, string(data), ticketNumber)
+	rows, err := pool.Query(ctx, string(data), ticketNumber, all, reporter)
 	if err != nil {
 		return nil, fmt.Errorf("query updates for ticket %s: %w", ticketNumber, err)
 	}

@@ -9,17 +9,18 @@ import (
 	"time"
 )
 
-// NewClient creates a plain HTTP client with the default service timeout.
-func NewClient() *http.Client {
-	timeout := 5 * time.Second
-
+// NewClient uses an explicit proxy policy; nil means a direct connection.
+func NewClient(timeout time.Duration, proxy ProxyFunc) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = proxy
 	return &http.Client{
-		Timeout: timeout,
+		Transport: transport,
+		Timeout:   timeout,
 	}
 }
 
 // NewTLSClient creates an HTTP client configured for mutual TLS.
-func NewTLSClient(caCertPath, clientCertPath, clientKeyPath string, timeout time.Duration) (*http.Client, error) {
+func NewTLSClient(caCertPath, clientCertPath, clientKeyPath string, timeout time.Duration, proxy ProxyFunc) (*http.Client, error) {
 	if caCertPath == "" || clientCertPath == "" || clientKeyPath == "" {
 		return nil, fmt.Errorf("TLS requires CA, client certificate, and client key paths")
 	}
@@ -47,6 +48,7 @@ func NewTLSClient(caCertPath, clientCertPath, clientKeyPath string, timeout time
 
 	return &http.Client{
 		Transport: &http.Transport{
+			Proxy:               proxy,
 			TLSClientConfig:     tlsConfig,
 			MaxIdleConns:        100,
 			IdleConnTimeout:     90 * time.Second,

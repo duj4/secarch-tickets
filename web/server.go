@@ -8,14 +8,17 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"secarch-tickets/internal/api"
+	"secarch-tickets/internal/appconfig"
 	"secarch-tickets/internal/cmdb"
 	"secarch-tickets/internal/db"
+	"secarch-tickets/internal/httpclient"
 	"secarch-tickets/internal/logger"
 	"secarch-tickets/internal/middleware"
+	"secarch-tickets/internal/oidcauth"
 	"secarch-tickets/internal/secarch"
 
 	"github.com/gin-gonic/gin"
@@ -24,107 +27,55 @@ import (
 //go:embed templates/*.html static
 var webFiles embed.FS
 
-const (
-	defaultListenAddr = ":8443"
-	defaultTLSDir     = "/d/d1/secarch-tickets/tls"
-	defaultCACertFile = "/etc/pki/ca-trust/source/anchors/katello-server-ca.pem"
-	defaultConfigDir  = "/d/d1/secarch-tickets/config"
-)
-
-// TLSPaths groups the server and client certificate paths used by the web service.
-type TLSPaths struct {
-	ServerCert string
-	ServerKey  string
-	ClientCert string
-	ClientKey  string
-	CACert     string
-}
-
 // Run initializes and starts the SecArch Tickets web service.
 //
 // It loads configuration, prepares shared clients, registers embedded
 // templates and static assets, and starts the HTTPS server.
-func Run() error {
-	// Resolve the runtime environment.
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
-	if env == "" {
-		env = "qa"
-	}
-
-	if env != "qa" && env != "prod" {
-		return fmt.Errorf("unsupported APP_ENV %q, expected qa or prod", env)
-	}
-
-	// Resolve TLS assets for the server and outbound client requests.
-	tlsPaths, err := resolveTLSPaths(env)
+func Run(configPath string) error {
+	cfg, err := appconfig.Load(configPath)
 	if err != nil {
 		return err
 	}
-
+	env := cfg.Server.Environment
+	tlsPaths := cfg.TLS
 	if err := validateTLSPaths(tlsPaths); err != nil {
 		return err
 	}
+	logger.Info("loading configuration", "env", env, "config_file", configPath)
 
-	// Resolve the configuration directory.
-	configDir := resolveConfigDir()
-
-	// Build paths to the configuration files used by this process.
-	dbConfigPath := filepath.Join(configDir, "db.json")
-	cmdbConfigPath := filepath.Join(configDir, "cmdb.json")
-
-	logger.Info(
-		"loading configuration",
-		"env", env,
-		"config_dir", configDir,
-		"db_config", dbConfigPath,
-		"cmdb_config", cmdbConfigPath,
-	)
-
-	// Load and validate database configuration.
-	dbConfig, err := db.LoadConfig(dbConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to load db config: %w", err)
-	}
-
-	// Apply the shared client mTLS paths to the database configuration.
-	dbConfig.SSLRootCert = tlsPaths.CACert
-	dbConfig.SSLCert = tlsPaths.ClientCert
-	dbConfig.SSLKey = tlsPaths.ClientKey
-
-	// Use one root context for startup-time initialization.
 	ctx := context.Background()
+	proxy, err := cfg.Proxy.Resolver()
+	if err != nil {
+		return err
+	}
+	var oidcClient *http.Client
+	if cfg.OIDC.Enabled {
+		oidcClient = httpclient.NewClient(time.Duration(cfg.OIDC.HTTPTimeoutSeconds)*time.Second, proxy)
+		defer oidcClient.CloseIdleConnections()
+	}
+	authManager, err := oidcauth.New(ctx, cfg.OIDC, oidcClient)
+	if err != nil {
+		return fmt.Errorf("failed to initialize OIDC: %w", err)
+	}
+	logger.Info("OIDC authentication configured", "enabled", authManager.Enabled())
 
-	// Create the database pool and keep it alive for the server lifetime.
-	pool, err := db.NewPool(ctx, dbConfig)
+	pool, err := db.NewPool(ctx, cfg.DB)
 	if err != nil {
 		return fmt.Errorf("failed to create db pool: %w", err)
 	}
 	defer pool.Close()
-
-	// Ensure the application schema exists before serving traffic.
 	if err := db.EnsureSchema(ctx, pool); err != nil {
 		return fmt.Errorf("failed to initialize/check DB schema: %w", err)
 	}
 
-	// Load and validate CMDB configuration.
-	cmdbConfig, err := cmdb.LoadConfig(cmdbConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to load cmdb config: %w", err)
+	var cmdbProxy httpclient.ProxyFunc
+	if cfg.Proxy.CMDBEnabled {
+		cmdbProxy = proxy
 	}
-
-	// Apply the shared client mTLS paths to the CMDB configuration.
-	cmdbConfig.CACertPath = tlsPaths.CACert
-	cmdbConfig.ClientCertPath = tlsPaths.ClientCert
-	cmdbConfig.ClientKeyPath = tlsPaths.ClientKey
-
-	// Create the shared CMDB client.
-	cmdbClient, err := cmdb.NewClient(cmdbConfig)
+	cmdbConfig := cfg.CMDB
+	cmdbClient, err := cmdb.NewClient(cmdbConfig, cmdbProxy)
 	if err != nil {
 		return fmt.Errorf("failed to create CMDB client: %w", err)
-	}
-
-	if cmdbClient == nil {
-		return fmt.Errorf("failed to create CMDB client: client is nil")
 	}
 
 	service := secarch.NewTicketService(pool, cmdbClient, secarch.RefreshPolicy{
@@ -176,41 +127,45 @@ func Run() error {
 	r.StaticFS("/static", http.FS(staticFS))
 
 	// Register pages and API routes.
-	registerRoutes(r, service, cmdbConfig.TicketBrowseURL)
+	registerRoutes(r, service, authManager, cmdbConfig.TicketBrowseURL)
 
 	// Start the HTTPS server.
-	return runTLSServer(r, env, tlsPaths.ServerCert, tlsPaths.ServerKey)
+	return runTLSServer(r, env, cfg.Server.ListenAddr, tlsPaths.ServerCert, tlsPaths.ServerKey)
 
 }
 
 // registerRoutes registers all page and API routes for the web service.
 //
 // The API handlers share the database pool and CMDB client created during startup.
-func registerRoutes(r *gin.Engine, service *secarch.TicketService, ticketBrowseURL string) {
+func registerRoutes(r *gin.Engine, service *secarch.TicketService, authManager *oidcauth.Manager, ticketBrowseURL string) {
 	// Health check.
 	r.GET("/healthz", api.HealthHandler)
+	authManager.RegisterRoutes(r)
+
+	protected := r.Group("/")
+	protected.Use(authManager.RequireAuth())
 
 	// SecArch tickets page.
-	r.GET("/", func(c *gin.Context) {
+	protected.GET("/", func(c *gin.Context) {
+		principal, _ := oidcauth.PrincipalFromContext(c)
 		c.HTML(http.StatusOK, "secarch_tickets.html", gin.H{
 			"TicketBrowseURL": ticketBrowseURL,
+			"OIDCEnabled":     authManager.Enabled(),
+			"Username":        principal.Username,
+			"IsAdmin":         principal.IsAdmin,
 		})
 	})
 
-	r.GET("/api/tickets", api.ListTicketsHandler(service))
-	r.POST("/api/tickets/refresh", api.RefreshTicketsHandler(service))
-	r.PUT("/api/tickets/:ticket_number/expected-date", api.UpdateExpectedDateHandler(service))
-	r.GET("/api/tickets/:ticket_number/updates", api.ListTicketUpdatesHandler(service))
-	r.POST("/api/tickets/:ticket_number/updates", api.CreateTicketUpdateHandler(service))
-	r.GET("/api/statistics/closed", api.ClosedStatisticsHandler(service))
+	protected.GET("/api/tickets", api.ListTicketsHandler(service))
+	protected.POST("/api/tickets/refresh", api.RefreshTicketsHandler(service))
+	protected.PUT("/api/tickets/:ticket_number/expected-date", api.UpdateExpectedDateHandler(service))
+	protected.GET("/api/tickets/:ticket_number/updates", api.ListTicketUpdatesHandler(service))
+	protected.POST("/api/tickets/:ticket_number/updates", api.CreateTicketUpdateHandler(service))
+	protected.GET("/api/statistics/closed", api.ClosedStatisticsHandler(service))
 }
 
 // runTLSServer starts the Gin HTTPS server.
-func runTLSServer(r *gin.Engine, env, certFilePath, keyFilePath string) error {
-	listenAddr := strings.TrimSpace(os.Getenv("APP_LISTEN_ADDR"))
-	if listenAddr == "" {
-		listenAddr = defaultListenAddr
-	}
+func runTLSServer(r *gin.Engine, env, listenAddr, certFilePath, keyFilePath string) error {
 
 	logger.Info(
 		"starting service",
@@ -227,45 +182,8 @@ func runTLSServer(r *gin.Engine, env, certFilePath, keyFilePath string) error {
 	return nil
 }
 
-// resolveConfigDir resolves the effective configuration directory.
-func resolveConfigDir() string {
-	baseConfigDir := strings.TrimSpace(os.Getenv("APP_CONFIG_DIR"))
-	if baseConfigDir == "" {
-		baseConfigDir = defaultConfigDir
-		logger.Info("APP_CONFIG_DIR not set, using default", "path", baseConfigDir)
-	}
-
-	return baseConfigDir
-}
-
-// resolveTLSPaths returns the certificate paths used for server TLS and client mTLS.
-func resolveTLSPaths(env string) (TLSPaths, error) {
-	tlsDir := strings.TrimSpace(os.Getenv("APP_TLS_DIR"))
-	if tlsDir == "" {
-		tlsDir = defaultTLSDir
-	}
-
-	var clientName string
-	switch env {
-	case "qa":
-		clientName = "itsm_jsm_qa"
-	case "prod":
-		clientName = "itsm_jsm_prod"
-	default:
-		return TLSPaths{}, fmt.Errorf("unsupported APP_ENV %q, expected qa or prod", env)
-	}
-
-	return TLSPaths{
-		ServerCert: filepath.Join(tlsDir, "tls.pem"),
-		ServerKey:  filepath.Join(tlsDir, "tls.key"),
-		ClientCert: filepath.Join(tlsDir, clientName+".pem"),
-		ClientKey:  filepath.Join(tlsDir, clientName+".key"),
-		CACert:     defaultCACertFile,
-	}, nil
-}
-
 // validateTLSPaths verifies that every required TLS path is set and accessible.
-func validateTLSPaths(paths TLSPaths) error {
+func validateTLSPaths(paths appconfig.TLSConfig) error {
 	checks := map[string]string{
 		"server cert": paths.ServerCert,
 		"server key":  paths.ServerKey,

@@ -1,0 +1,64 @@
+{
+  "server": {
+    "environment": "prod",
+    "listen_addr": ":8443"
+  },
+  "tls": {
+    "server_cert": "/d/d1/secarch-tickets/tls/tls.pem",
+    "server_key": "/d/d1/secarch-tickets/tls/tls.key",
+    "client_cert": "/d/d1/secarch-tickets/tls/itsm_jsm_prod.pem",
+    "client_key": "/d/d1/secarch-tickets/tls/itsm_jsm_prod.key",
+    "ca_cert": "/etc/pki/ca-trust/source/anchors/katello-server-ca.pem"
+  },
+  "db": {
+    "db_servers": [
+      "vshgms618.linux.ms.com.cn",
+      "vshgms619.linux.ms.com.cn"
+    ],
+    "db_port": 5051,
+    "db_name": "ai_info_db01",
+    "db_user": "itsm_jsm_prod",
+    "ssl_mode": "verify-full",
+    "target_session_attrs": "read-write",
+    "connect_timeout_seconds": 5
+  },
+  "cmdb": {
+    "ticket_api_url": "https://cmdb-api.ai.ms.com.cn/api/jira-issue/v1/ticket-queue",
+    "ticket_browse_url": "https://itsm.ai.ms.com.cn/projects/ITSM/queues/issue",
+    "objects_api_url": "https://cmdb-api.ai.ms.com.cn/api/insight/1/objects",
+    "page_size": 100,
+    "object_batch_size": 50,
+    "object_max_concurrency": 2,
+    "http_timeout_seconds": 60,
+    "refresh_success_cooldown_seconds": 5,
+    "refresh_failure_backoff_seconds": 10,
+    "refresh_failure_backoff_multiplier": 2,
+    "refresh_circuit_breaker_threshold": 3,
+    "refresh_circuit_open_seconds": 300
+  },
+  "oidc": {
+    "enabled": false,
+    "issuer_url": "",
+    "client_id": "",
+    "client_secret": "",
+    "redirect_url": "",
+    "username_claim": "samaccountname",
+    "groups_claim": "roles",
+    "admin_group": "SecArchTicketsAdmin",
+    "scopes": [
+      "openid",
+      "profile",
+      "email"
+    ],
+    "session_ttl": "8h",
+    "session_cookie": "secarch_oidc_session",
+    "session_secret": "",
+    "http_timeout_seconds": 30
+  },
+  "proxy": {
+    "https_proxy": "http://appproxy-inet.srv.mssip.ms.com.cn:8080",
+    "http_proxy": "http://appproxy-inet.srv.mssip.ms.com.cn:8080",
+    "no_proxy": "ms.com.cn,localhost,127.0.0.1",
+    "cmdb_enabled": false
+  }
+}

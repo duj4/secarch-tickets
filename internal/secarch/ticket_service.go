@@ -49,17 +49,17 @@ func NewTicketService(pool *pgxpool.Pool, cmdbClient cmdbTicketClient, policy Re
 	}
 }
 
-// ListTickets returns the durable PostgreSQL snapshot without calling CMDB.
-func (s *TicketService) ListTickets(ctx context.Context) ([]StoredTicket, error) {
-	return ListTickets(ctx, s.pool)
+// ListTickets returns the caller-visible durable PostgreSQL snapshot without calling CMDB.
+func (s *TicketService) ListTickets(ctx context.Context, access TicketAccess) ([]StoredTicket, error) {
+	return ListTickets(ctx, s.pool, access)
 }
 
 // UpdateExpectedDate updates a user-maintained field without changing CMDB.
-func (s *TicketService) UpdateExpectedDate(ctx context.Context, ticketNumber string, expectedDate time.Time) error {
-	return UpdateExpectedDate(ctx, s.pool, strings.TrimSpace(ticketNumber), expectedDate)
+func (s *TicketService) UpdateExpectedDate(ctx context.Context, ticketNumber string, expectedDate time.Time, access TicketAccess) error {
+	return UpdateExpectedDate(ctx, s.pool, strings.TrimSpace(ticketNumber), expectedDate, access)
 }
 
 // CountClosedTickets returns the number of resolved tickets in a time range.
-func (s *TicketService) CountClosedTickets(ctx context.Context, start, endExclusive time.Time) (int64, error) {
-	return CountClosedTickets(ctx, s.pool, start, endExclusive)
+func (s *TicketService) CountClosedTickets(ctx context.Context, start, endExclusive time.Time, access TicketAccess) (int64, error) {
+	return CountClosedTickets(ctx, s.pool, start, endExclusive, access)
 }

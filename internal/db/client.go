@@ -3,9 +3,7 @@ package db
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -16,21 +14,12 @@ import (
 //
 // Keep this list explicit so a required query missing from a deployment fails at build time
 // instead of surfacing later as an HTTP 500 when that feature is first used.
+//
 //go:embed sql/count_closed_tickets.sql sql/create_ticket_update.sql sql/list_secarch_tickets.sql sql/list_ticket_updates.sql sql/schema_secarch_ticket.sql sql/upsert_secarch_ticket.sql
 var SQLFiles embed.FS
 
-// LoadConfig reads PostgreSQL settings from a JSON file, applies defaults, and validates the result.
-func LoadConfig(path string) (Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, err
-	}
-
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, err
-	}
-
+// PrepareConfig applies PostgreSQL defaults and validates the supplied settings.
+func PrepareConfig(cfg Config) (Config, error) {
 	// Apply defaults.
 	if cfg.MaxConns <= 0 {
 		cfg.MaxConns = 10

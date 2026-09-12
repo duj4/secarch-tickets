@@ -25,6 +25,8 @@ LEFT JOIN (
     FROM secarch_tickets.ticket_updates
     GROUP BY ticket_id
 ) AS u ON u.ticket_id = t.id
+WHERE $1::boolean
+   OR LOWER(BTRIM(t.reporter)) = LOWER(BTRIM($2))
 ORDER BY
     t.expected_date ASC NULLS LAST,
     t.updated_at ASC

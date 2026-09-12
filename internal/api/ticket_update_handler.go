@@ -20,7 +20,7 @@ type CreateTicketUpdateRequest struct {
 func ListTicketUpdatesHandler(service *secarch.TicketService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ticketNumber := strings.TrimSpace(c.Param("ticket_number"))
-		updates, err := service.ListTicketUpdates(c.Request.Context(), ticketNumber)
+		updates, err := service.ListTicketUpdates(c.Request.Context(), ticketNumber, ticketAccess(c))
 		if err != nil {
 			if errors.Is(err, secarch.ErrTicketNotFound) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "ticket not found"})
@@ -47,7 +47,7 @@ func CreateTicketUpdateHandler(service *secarch.TicketService) gin.HandlerFunc {
 			return
 		}
 
-		update, err := service.AddTicketUpdate(c.Request.Context(), ticketNumber, req.Content)
+		update, err := service.AddTicketUpdate(c.Request.Context(), ticketNumber, req.Content, ticketAccess(c))
 		if err != nil {
 			switch {
 			case errors.Is(err, secarch.ErrTicketNotFound):

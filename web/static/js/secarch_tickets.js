@@ -297,8 +297,7 @@ function responseMessage(body, fallback) { return body.message || body.error || 
 function retrySecondsRemaining() { return Math.max(0, Math.ceil((retryUntil - Date.now()) / 1000)) }
 
 function renderSyncState() {
-  const button = document.getElementById("refreshBtn")
-  const label = document.getElementById("refreshLabel")
+  const label = document.getElementById("syncState")
   const banner = document.getElementById("syncBanner")
   const bannerText = document.getElementById("syncBannerText")
   const remaining = retrySecondsRemaining()
@@ -308,29 +307,34 @@ function renderSyncState() {
   document.getElementById("lastRefreshed").textContent = lastSuccess
     ? `Last synchronized ${lastSuccessText}`
     : "No successful synchronization yet"
-  button.disabled = refreshInFlight || remaining > 0
-  document.getElementById("refreshIcon").classList.toggle("animate-spin", refreshInFlight)
-  label.textContent = refreshInFlight ? "Refreshing..." : remaining > 0 ? `Retry in ${formatDuration(remaining)}` : "Refresh"
+  document.getElementById("syncIcon").classList.toggle("animate-spin", refreshInFlight)
+  label.textContent = refreshInFlight
+    ? "Synchronizing..."
+    : remaining > 0
+      ? `Sync available in ${formatDuration(remaining)}`
+      : syncNetworkError || Number(currentSyncStatus?.consecutive_failures || 0) > 0
+        ? "Refresh page to retry"
+        : "Refresh page to sync"
   banner.className = "mb-4 hidden rounded-xl border px-4 py-3 text-sm"
   bannerText.textContent = ""
   if (!currentSyncStatus) return
 
   if (syncNetworkError) {
     banner.className = "mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
-    bannerText.textContent = `Unable to reach the synchronization service. Existing ticket data is still available. Last successful sync: ${lastSuccessText}. Please try again or contact the administrator.`
+    bannerText.textContent = `Unable to reach the synchronization service. Existing ticket data is still available. Last successful sync: ${lastSuccessText}. Refresh this page to retry or contact the administrator.`
     return
   }
 
   const failures = Number(currentSyncStatus.consecutive_failures || 0)
   if (currentSyncStatus.status === "circuit_open" && remaining > 0) {
     banner.className = "mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
-    bannerText.textContent = `CMDB synchronization failed ${failures} consecutive times. Existing ticket data is still available. Try again in ${formatDuration(remaining)}. Last successful sync: ${lastSuccessText}. Please contact the administrator if the issue continues.`
+    bannerText.textContent = `CMDB synchronization failed ${failures} consecutive times. Existing ticket data is still available. Refresh this page in ${formatDuration(remaining)} to retry. Last successful sync: ${lastSuccessText}. Please contact the administrator if the issue continues.`
   } else if (currentSyncStatus.status === "circuit_open" || currentSyncStatus.status === "half_open") {
     banner.className = "mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
-    bannerText.textContent = `CMDB synchronization can be retried now. Existing ticket data is still available. Last successful sync: ${lastSuccessText}. Click Refresh to start one recovery attempt.`
+    bannerText.textContent = `CMDB synchronization can be retried now. Existing ticket data is still available. Last successful sync: ${lastSuccessText}. Refresh this page to start one recovery attempt.`
   } else if (failures > 0) {
     banner.className = "mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
-    const retryText = remaining > 0 ? ` Try again in ${formatDuration(remaining)}.` : " You can try again now."
+    const retryText = remaining > 0 ? ` Refresh this page in ${formatDuration(remaining)} to retry.` : " Refresh this page to retry."
     bannerText.textContent = `CMDB synchronization failed ${failures} consecutive time${failures === 1 ? "" : "s"}. Existing ticket data is still available.${retryText} Last successful sync: ${lastSuccessText}.`
   }
 }
@@ -366,7 +370,7 @@ function showSyncNetworkError() {
 async function loadTickets({ resetPage = true } = {}) {
   if (allData.length === 0) renderSkeleton()
   try {
-    const response = await fetch("/api/tickets")
+    const response = await fetch("/api/tickets", { cache: "no-store" })
     const body = await parseResponseBody(response)
     if (!response.ok) throw new Error(responseMessage(body, "Failed to load tickets"))
     allData = Array.isArray(body.tickets) ? body.tickets : []
@@ -374,12 +378,14 @@ async function loadTickets({ resetPage = true } = {}) {
     updateStats()
     render()
     setSyncStatus(body.sync)
+    return true
   } catch (error) {
     console.error(error)
     showToast(error.message || "Failed to load tickets", "error")
     if (allData.length === 0) {
       document.getElementById("tbody").innerHTML = `<tr><td colspan="9" class="px-4 py-12 text-center text-sm text-red-600">Failed to load tickets</td></tr>`
     }
+    return false
   }
 }
 
@@ -388,20 +394,22 @@ async function refreshTickets() {
   refreshInFlight = true
   renderSyncState()
   try {
+    // Show the stored snapshot first and honor the server's shared waiting period.
+    if (!await loadTickets({ resetPage: false }) || retrySecondsRemaining() > 0) return
     const response = await fetch("/api/tickets/refresh", { method: "POST" })
     const body = await parseResponseBody(response)
     if (body.sync) setSyncStatus(body.sync)
     if (!response.ok) {
+      if (response.status === 429 && body.sync?.status === "cooldown") {
+        // Another user's sync may have completed after the initial snapshot read.
+        await loadTickets({ resetPage: false })
+        return
+      }
       const message = responseMessage(body, "CMDB synchronization failed")
-      showToast(message, response.status === 429 && body.sync?.status === "cooldown" ? "info" : "error")
+      showToast(message, "error")
       return
     }
     await loadTickets({ resetPage: false })
-    const updatedCount = Number(body.updated_count || 0)
-    const updateSummary = updatedCount === 0
-      ? "No ticket changes"
-      : `${updatedCount} ticket change${updatedCount === 1 ? "" : "s"} synchronized`
-    showToast(`Synchronization complete · ${updateSummary}`, "success")
   } catch (error) {
     console.error(error)
     showSyncNetworkError()
@@ -815,7 +823,6 @@ document.getElementById("tbody").addEventListener("click", event => {
   event.preventDefault()
   openTicketDetails(button.dataset.ticket)
 })
-document.getElementById("refreshBtn").addEventListener("click", refreshTickets)
 document.getElementById("expectedDateForm").addEventListener("submit", updateExpectedDate)
 document.getElementById("updateSubmitBtn").addEventListener("click", addTicketUpdate)
 document.getElementById("updateContent").addEventListener("input", updateCharacterCounter)
@@ -852,4 +859,4 @@ defaultExportStart.setDate(defaultExportStart.getDate() - 30)
 document.getElementById("exportStart").value = formatDateLocal(defaultExportStart)
 updateStatusButtons()
 updateCharacterCounter()
-loadTickets()
+refreshTickets()

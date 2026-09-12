@@ -16,7 +16,7 @@ import (
 // ListTicketsHandler returns the stored snapshot and refresh-control status.
 func ListTicketsHandler(service *secarch.TicketService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tickets, err := service.ListTickets(c.Request.Context())
+		tickets, err := service.ListTickets(c.Request.Context(), ticketAccess(c))
 		if err != nil {
 			logger.Error("list tickets failed", "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -82,7 +82,7 @@ func UpdateExpectedDateHandler(service *secarch.TicketService) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "expected_date must be in YYYY-MM-DD format"})
 			return
 		}
-		if err := service.UpdateExpectedDate(c.Request.Context(), ticketNumber, expectedDate); err != nil {
+		if err := service.UpdateExpectedDate(c.Request.Context(), ticketNumber, expectedDate, ticketAccess(c)); err != nil {
 			if errors.Is(err, secarch.ErrTicketNotFound) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "ticket not found"})
 				return
@@ -110,7 +110,7 @@ func ClosedStatisticsHandler(service *secarch.TicketService) gin.HandlerFunc {
 		china := time.FixedZone("Asia/Shanghai", 8*60*60)
 		start := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, china)
 		endExclusive := time.Date(endDate.Year(), endDate.Month(), endDate.Day()+1, 0, 0, 0, 0, china)
-		count, err := service.CountClosedTickets(c.Request.Context(), start, endExclusive)
+		count, err := service.CountClosedTickets(c.Request.Context(), start, endExclusive, ticketAccess(c))
 		if err != nil {
 			logger.Error("count Closed tickets failed", "start", startText, "end", endText, "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
