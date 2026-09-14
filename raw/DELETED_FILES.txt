@@ -1,0 +1,12 @@
+# 本次提交中已删除的文件，路径相对于项目根目录。
+# 将更新包同步到目标项目时，请同步删除下列旧文件。
+# 本清单仅作说明，无需复制到目标项目。
+
+atlassian_mpac_intermediate_ca_v2.txt
+atlassian_mpac_root_ca_v1.txt
+config/prod/cmdb.json
+config/prod/db.json
+config/proxy
+config/qa/cmdb.json
+config/qa/db.json
+pod
