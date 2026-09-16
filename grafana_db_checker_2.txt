@@ -1,0 +1,50 @@
+BEGIN READ ONLY;
+
+SET LOCAL statement_timeout = '30s';
+SET LOCAL lock_timeout = '2s';
+
+WITH datasource_refs AS (
+    SELECT
+        dv.id AS dashboard_version_id,
+        dv.dashboard_id,
+        dv.version,
+        d.org_id,
+        d.uid,
+        d.title,
+        x.datasource
+    FROM dashboard_version dv
+    JOIN dashboard d
+      ON d.id = dv.dashboard_id
+    CROSS JOIN LATERAL jsonb_path_query(
+        dv.data::jsonb,
+        'strict $.**.datasource'
+    ) AS x(datasource)
+    WHERE dv.dashboard_id = 12345
+)
+SELECT
+    dashboard_version_id,
+    dashboard_id,
+    version,
+    org_id,
+    uid,
+    title,
+    datasource
+FROM datasource_refs
+WHERE
+    jsonb_typeof(datasource) = 'object'
+    AND (
+        (
+            datasource ? 'uid'
+            AND jsonb_typeof(datasource -> 'uid')
+                NOT IN ('string', 'null')
+        )
+        OR
+        (
+            datasource ? 'type'
+            AND jsonb_typeof(datasource -> 'type')
+                NOT IN ('string', 'null')
+        )
+    )
+ORDER BY version;
+
+ROLLBACK;

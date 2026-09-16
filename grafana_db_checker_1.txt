@@ -1,0 +1,232 @@
+\set ON_ERROR_STOP on
+\timing on
+
+\echo ''
+\echo '============================================================'
+\echo ' Grafana 13 Unified Storage Pre-upgrade Checker'
+\echo ' Target: Grafana 12.x -> 13.x / PostgreSQL'
+\echo ' READ ONLY - no database changes will be made'
+\echo '============================================================'
+\echo ''
+
+BEGIN READ ONLY;
+
+-- Prevent an accidental expensive query from running forever.
+SET LOCAL statement_timeout = '60s';
+SET LOCAL lock_timeout = '2s';
+
+-- ============================================================
+-- 0. Environment / table inventory
+-- ============================================================
+
+\echo ''
+\echo '=== [0] Database / Grafana table inventory ==='
+\echo ''
+
+SELECT version();
+
+SELECT
+    'dashboard' AS table_name,
+    count(*) AS rows,
+    pg_size_pretty(pg_total_relation_size('dashboard')) AS total_size
+FROM dashboard
+
+UNION ALL
+
+SELECT
+    'dashboard_version',
+    count(*),
+    pg_size_pretty(pg_total_relation_size('dashboard_version'))
+FROM dashboard_version;
+
+
+-- ============================================================
+-- 1. CURRENT dashboards
+--
+-- Known Grafana 13 indexing blocker:
+--
+-- datasource may be:
+--   string
+--   null
+--   object
+--
+-- If object:
+--   datasource.uid  must be string/null
+--   datasource.type must be string/null
+--
+-- Example BAD value:
+--
+-- "datasource": {
+--   "type": "prometheus",
+--   "uid": {"datasource": null}
+-- }
+-- ============================================================
+
+\echo ''
+\echo '=== [1] CURRENT dashboards: invalid datasource.uid/type ==='
+\echo ''
+\echo 'Expected result: 0 rows'
+\echo ''
+
+WITH datasource_refs AS (
+    SELECT
+        d.id,
+        d.org_id,
+        d.uid,
+        d.title,
+        x.datasource
+    FROM dashboard d
+    CROSS JOIN LATERAL jsonb_path_query(
+        d.data::jsonb,
+        'strict $.**.datasource'
+    ) AS x(datasource)
+)
+SELECT
+    id AS dashboard_id,
+    org_id,
+    uid AS dashboard_uid,
+    title,
+    CASE
+        WHEN datasource ? 'uid'
+         AND jsonb_typeof(datasource -> 'uid') NOT IN ('string', 'null')
+        THEN jsonb_typeof(datasource -> 'uid')
+    END AS bad_uid_type,
+    CASE
+        WHEN datasource ? 'uid'
+         AND jsonb_typeof(datasource -> 'uid') NOT IN ('string', 'null')
+        THEN datasource -> 'uid'
+    END AS bad_uid_value,
+    CASE
+        WHEN datasource ? 'type'
+         AND jsonb_typeof(datasource -> 'type') NOT IN ('string', 'null')
+        THEN jsonb_typeof(datasource -> 'type')
+    END AS bad_type_type,
+    CASE
+        WHEN datasource ? 'type'
+         AND jsonb_typeof(datasource -> 'type') NOT IN ('string', 'null')
+        THEN datasource -> 'type'
+    END AS bad_type_value
+FROM datasource_refs
+WHERE
+    jsonb_typeof(datasource) = 'object'
+    AND (
+        (
+            datasource ? 'uid'
+            AND jsonb_typeof(datasource -> 'uid')
+                NOT IN ('string', 'null')
+        )
+        OR
+        (
+            datasource ? 'type'
+            AND jsonb_typeof(datasource -> 'type')
+                NOT IN ('string', 'null')
+        )
+    )
+ORDER BY org_id, dashboard_uid;
+
+
+-- ============================================================
+-- 2. CURRENT dashboards with an invalid datasource container
+--
+-- Grafana 13 accepts datasource as:
+--   object
+--   string
+--   null
+--
+-- array / number / boolean are suspicious.
+--
+-- These are advisory findings rather than the exact fatal case
+-- confirmed in #128985.
+-- ============================================================
+
+\echo ''
+\echo '=== [2] CURRENT dashboards: unexpected datasource value type ==='
+\echo ''
+\echo 'Expected result: 0 rows'
+\echo ''
+
+WITH datasource_refs AS (
+    SELECT
+        d.id,
+        d.org_id,
+        d.uid,
+        d.title,
+        x.datasource
+    FROM dashboard d
+    CROSS JOIN LATERAL jsonb_path_query(
+        d.data::jsonb,
+        'strict $.**.datasource'
+    ) AS x(datasource)
+)
+SELECT DISTINCT
+    id AS dashboard_id,
+    org_id,
+    uid AS dashboard_uid,
+    title,
+    jsonb_typeof(datasource) AS datasource_type,
+    datasource
+FROM datasource_refs
+WHERE jsonb_typeof(datasource)
+      NOT IN ('object', 'string', 'null')
+ORDER BY org_id, dashboard_uid;
+
+
+-- ============================================================
+-- 3. Summary for CURRENT dashboards
+-- ============================================================
+
+\echo ''
+\echo '=== [3] CURRENT dashboard blocker summary ==='
+\echo ''
+
+WITH datasource_refs AS (
+    SELECT
+        d.id,
+        d.org_id,
+        d.uid,
+        x.datasource
+    FROM dashboard d
+    CROSS JOIN LATERAL jsonb_path_query(
+        d.data::jsonb,
+        'strict $.**.datasource'
+    ) AS x(datasource)
+),
+bad AS (
+    SELECT DISTINCT
+        id,
+        org_id,
+        uid
+    FROM datasource_refs
+    WHERE
+        (
+            jsonb_typeof(datasource) = 'object'
+            AND (
+                (
+                    datasource ? 'uid'
+                    AND jsonb_typeof(datasource -> 'uid')
+                        NOT IN ('string', 'null')
+                )
+                OR
+                (
+                    datasource ? 'type'
+                    AND jsonb_typeof(datasource -> 'type')
+                        NOT IN ('string', 'null')
+                )
+            )
+        )
+        OR
+        jsonb_typeof(datasource)
+            NOT IN ('object', 'string', 'null')
+)
+SELECT
+    count(*) AS affected_current_dashboards
+FROM bad;
+
+
+ROLLBACK;
+
+\echo ''
+\echo '============================================================'
+\echo ' Current dashboard check completed.'
+\echo ' Database transaction was READ ONLY and has been rolled back.'
+\echo '============================================================'
