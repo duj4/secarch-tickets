@@ -1,0 +1,56 @@
+BEGIN READ ONLY;
+
+WITH bad_targets AS (
+    SELECT
+        d.uid,
+        d.title,
+        target.item
+    FROM dashboard d
+    CROSS JOIN LATERAL jsonb_path_query(
+        d.data::jsonb,
+        'strict $.**.targets'
+    ) AS t(targets)
+    CROSS JOIN LATERAL (
+        SELECT x.item
+        FROM jsonb_array_elements(
+            CASE
+                WHEN jsonb_typeof(t.targets) = 'array'
+                THEN t.targets
+                ELSE '[]'::jsonb
+            END
+        ) AS x(item)
+
+        UNION ALL
+
+        SELECT x.value
+        FROM jsonb_each(
+            CASE
+                WHEN jsonb_typeof(t.targets) = 'object'
+                THEN t.targets
+                ELSE '{}'::jsonb
+            END
+        ) AS x(key, value)
+    ) AS target
+    WHERE d.uid IN (
+        'f4a08d9f-f989-4f08-982c-8e3cae6bd989',
+        'ov0oEgdij',
+        'ov0oEgdij11'
+    )
+      AND jsonb_typeof(target.item) = 'object'
+      AND target.item ? ''
+)
+SELECT
+    uid,
+    title,
+    count(*) AS bad_targets,
+    count(*) FILTER (
+        WHERE NOT (item ? 'datasource')
+    ) AS missing_datasource,
+    count(*) FILTER (
+        WHERE item ? 'datasource'
+    ) AS already_has_datasource
+FROM bad_targets
+GROUP BY uid, title
+ORDER BY uid;
+
+ROLLBACK;
