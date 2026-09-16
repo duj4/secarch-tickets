@@ -1,0 +1,93 @@
+BEGIN READ ONLY;
+
+SET LOCAL statement_timeout = '120s';
+SET LOCAL lock_timeout = '2s';
+
+WITH docs AS (
+    SELECT
+        'current'::text AS source,
+        d.id AS dashboard_id,
+        NULL::bigint AS dashboard_version_id,
+        NULL::int AS version,
+        d.org_id,
+        d.uid AS dashboard_uid,
+        d.title,
+        d.data::jsonb AS data
+    FROM dashboard d
+
+    UNION ALL
+
+    SELECT
+        'history'::text AS source,
+        dv.dashboard_id,
+        dv.id AS dashboard_version_id,
+        dv.version,
+        d.org_id,
+        d.uid AS dashboard_uid,
+        d.title,
+        dv.data::jsonb AS data
+    FROM dashboard_version dv
+    JOIN dashboard d
+      ON d.id = dv.dashboard_id
+),
+datasource_refs AS (
+    SELECT
+        source,
+        dashboard_id,
+        dashboard_version_id,
+        version,
+        org_id,
+        dashboard_uid,
+        title,
+        x.datasource
+    FROM docs
+    CROSS JOIN LATERAL jsonb_path_query(
+        data,
+        'lax $.**.datasource'
+    ) AS x(datasource)
+),
+bad AS (
+    SELECT
+        *,
+        CASE
+            WHEN jsonb_typeof(datasource)
+                 NOT IN ('object', 'string', 'null')
+            THEN 'invalid datasource container type'
+
+            WHEN jsonb_typeof(datasource) = 'object'
+             AND datasource ? 'uid'
+             AND jsonb_typeof(datasource -> 'uid')
+                 NOT IN ('string', 'null')
+            THEN 'invalid datasource.uid type'
+
+            WHEN jsonb_typeof(datasource) = 'object'
+             AND datasource ? 'type'
+             AND jsonb_typeof(datasource -> 'type')
+                 NOT IN ('string', 'null')
+            THEN 'invalid datasource.type type'
+
+            ELSE NULL
+        END AS problem
+    FROM datasource_refs
+)
+
+SELECT
+    source,
+    org_id,
+    dashboard_id,
+    dashboard_version_id,
+    version,
+    dashboard_uid,
+    title,
+    problem,
+    jsonb_typeof(datasource) AS datasource_type,
+    datasource
+FROM bad
+WHERE problem IS NOT NULL
+ORDER BY
+    org_id,
+    dashboard_id,
+    source,
+    version;
+
+ROLLBACK;
