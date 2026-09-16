@@ -30,45 +30,48 @@ WITH docs AS (
     JOIN dashboard d
       ON d.id = dv.dashboard_id
 ),
-datasource_refs AS (
+target_containers AS (
     SELECT
-        source,
-        dashboard_id,
-        dashboard_version_id,
-        version,
-        org_id,
-        dashboard_uid,
-        title,
-        x.datasource
-    FROM docs
+        d.*,
+        x.targets
+    FROM docs d
     CROSS JOIN LATERAL jsonb_path_query(
-        data,
-        'lax $.**.datasource'
-    ) AS x(datasource)
+        d.data,
+        'strict $.**.targets'
+    ) AS x(targets)
 ),
-bad AS (
+target_items AS (
+    -- Normal targets array
     SELECT
-        *,
-        CASE
-            WHEN jsonb_typeof(datasource)
-                 NOT IN ('object', 'string', 'null')
-            THEN 'invalid datasource container type'
+        tc.source,
+        tc.dashboard_id,
+        tc.dashboard_version_id,
+        tc.version,
+        tc.org_id,
+        tc.dashboard_uid,
+        tc.title,
+        a.item
+    FROM target_containers tc
+    CROSS JOIN LATERAL jsonb_array_elements(tc.targets)
+        AS a(item)
+    WHERE jsonb_typeof(tc.targets) = 'array'
 
-            WHEN jsonb_typeof(datasource) = 'object'
-             AND datasource ? 'uid'
-             AND jsonb_typeof(datasource -> 'uid')
-                 NOT IN ('string', 'null')
-            THEN 'invalid datasource.uid type'
+    UNION ALL
 
-            WHEN jsonb_typeof(datasource) = 'object'
-             AND datasource ? 'type'
-             AND jsonb_typeof(datasource -> 'type')
-                 NOT IN ('string', 'null')
-            THEN 'invalid datasource.type type'
-
-            ELSE NULL
-        END AS problem
-    FROM datasource_refs
+    -- Grafana also accepts targets as an object
+    SELECT
+        tc.source,
+        tc.dashboard_id,
+        tc.dashboard_version_id,
+        tc.version,
+        tc.org_id,
+        tc.dashboard_uid,
+        tc.title,
+        o.value
+    FROM target_containers tc
+    CROSS JOIN LATERAL jsonb_each(tc.targets)
+        AS o(key, value)
+    WHERE jsonb_typeof(tc.targets) = 'object'
 )
 
 SELECT
@@ -79,14 +82,13 @@ SELECT
     version,
     dashboard_uid,
     title,
-    problem,
-    jsonb_typeof(datasource) AS datasource_type,
-    datasource
-FROM bad
-WHERE problem IS NOT NULL
+    item -> '' AS empty_key_value
+FROM target_items
+WHERE jsonb_typeof(item) = 'object'
+  AND item ? ''
 ORDER BY
     org_id,
-    dashboard_id,
+    dashboard_uid,
     source,
     version;
 
