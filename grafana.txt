@@ -1,3 +1,4 @@
+
 BEGIN READ ONLY;
 
 SET LOCAL statement_timeout = '120s';
@@ -18,14 +19,14 @@ WITH docs AS (
     UNION ALL
 
     SELECT
-        'history'::text AS source,
+        'history'::text,
         dv.dashboard_id,
-        dv.id AS dashboard_version_id,
+        dv.id,
         dv.version,
         d.org_id,
-        d.uid AS dashboard_uid,
+        d.uid,
         d.title,
-        dv.data::jsonb AS data
+        dv.data::jsonb
     FROM dashboard_version dv
     JOIN dashboard d
       ON d.id = dv.dashboard_id
@@ -41,7 +42,6 @@ target_containers AS (
     ) AS x(targets)
 ),
 target_items AS (
-    -- Normal targets array
     SELECT
         tc.source,
         tc.dashboard_id,
@@ -52,13 +52,11 @@ target_items AS (
         tc.title,
         a.item
     FROM target_containers tc
-    CROSS JOIN LATERAL jsonb_array_elements(tc.targets)
-        AS a(item)
+    CROSS JOIN LATERAL jsonb_array_elements(tc.targets) AS a(item)
     WHERE jsonb_typeof(tc.targets) = 'array'
 
     UNION ALL
 
-    -- Grafana also accepts targets as an object
     SELECT
         tc.source,
         tc.dashboard_id,
@@ -69,27 +67,47 @@ target_items AS (
         tc.title,
         o.value
     FROM target_containers tc
-    CROSS JOIN LATERAL jsonb_each(tc.targets)
-        AS o(key, value)
+    CROSS JOIN LATERAL jsonb_each(tc.targets) AS o(key, value)
     WHERE jsonb_typeof(tc.targets) = 'object'
+),
+bad AS (
+    SELECT *
+    FROM target_items
+    WHERE jsonb_typeof(item) = 'object'
+      AND item ? ''
 )
-
 SELECT
-    source,
     org_id,
     dashboard_id,
-    dashboard_version_id,
-    version,
     dashboard_uid,
     title,
-    item -> '' AS empty_key_value
-FROM target_items
-WHERE jsonb_typeof(item) = 'object'
-  AND item ? ''
-ORDER BY
+
+    count(*) FILTER (
+        WHERE source = 'current'
+    ) AS current_bad_targets,
+
+    count(DISTINCT dashboard_version_id) FILTER (
+        WHERE source = 'history'
+    ) AS affected_history_versions,
+
+    count(*) FILTER (
+        WHERE source = 'history'
+    ) AS history_bad_targets,
+
+    min(version) FILTER (
+        WHERE source = 'history'
+    ) AS first_bad_version,
+
+    max(version) FILTER (
+        WHERE source = 'history'
+    ) AS last_bad_version
+
+FROM bad
+GROUP BY
     org_id,
+    dashboard_id,
     dashboard_uid,
-    source,
-    version;
+    title
+ORDER BY org_id, dashboard_uid;
 
 ROLLBACK;
