@@ -1,113 +1,44 @@
-
 BEGIN READ ONLY;
 
 SET LOCAL statement_timeout = '120s';
 SET LOCAL lock_timeout = '2s';
 
-WITH docs AS (
-    SELECT
-        'current'::text AS source,
-        d.id AS dashboard_id,
-        NULL::bigint AS dashboard_version_id,
-        NULL::int AS version,
-        d.org_id,
-        d.uid AS dashboard_uid,
-        d.title,
-        d.data::jsonb AS data
-    FROM dashboard d
-
-    UNION ALL
-
-    SELECT
-        'history'::text,
-        dv.dashboard_id,
-        dv.id,
-        dv.version,
-        d.org_id,
-        d.uid,
-        d.title,
-        dv.data::jsonb
-    FROM dashboard_version dv
-    JOIN dashboard d
-      ON d.id = dv.dashboard_id
-),
-target_containers AS (
-    SELECT
-        d.*,
-        x.targets
-    FROM docs d
-    CROSS JOIN LATERAL jsonb_path_query(
-        d.data,
-        'strict $.**.targets'
-    ) AS x(targets)
-),
-target_items AS (
-    SELECT
-        tc.source,
-        tc.dashboard_id,
-        tc.dashboard_version_id,
-        tc.version,
-        tc.org_id,
-        tc.dashboard_uid,
-        tc.title,
-        a.item
-    FROM target_containers tc
-    CROSS JOIN LATERAL jsonb_array_elements(tc.targets) AS a(item)
-    WHERE jsonb_typeof(tc.targets) = 'array'
-
-    UNION ALL
-
-    SELECT
-        tc.source,
-        tc.dashboard_id,
-        tc.dashboard_version_id,
-        tc.version,
-        tc.org_id,
-        tc.dashboard_uid,
-        tc.title,
-        o.value
-    FROM target_containers tc
-    CROSS JOIN LATERAL jsonb_each(tc.targets) AS o(key, value)
-    WHERE jsonb_typeof(tc.targets) = 'object'
-),
-bad AS (
-    SELECT *
-    FROM target_items
-    WHERE jsonb_typeof(item) = 'object'
-      AND item ? ''
-)
 SELECT
-    org_id,
-    dashboard_id,
-    dashboard_uid,
-    title,
+    d.org_id,
+    d.id AS dashboard_id,
+    d.uid AS dashboard_uid,
+    d.title
+FROM dashboard d
+WHERE EXISTS (
+    SELECT 1
+    FROM jsonb_path_query(
+        d.data::jsonb,
+        'strict $.**.targets'
+    ) AS t(targets)
+    CROSS JOIN LATERAL (
+        SELECT x.item
+        FROM jsonb_array_elements(
+            CASE
+                WHEN jsonb_typeof(t.targets) = 'array'
+                THEN t.targets
+                ELSE '[]'::jsonb
+            END
+        ) AS x(item)
 
-    count(*) FILTER (
-        WHERE source = 'current'
-    ) AS current_bad_targets,
+        UNION ALL
 
-    count(DISTINCT dashboard_version_id) FILTER (
-        WHERE source = 'history'
-    ) AS affected_history_versions,
-
-    count(*) FILTER (
-        WHERE source = 'history'
-    ) AS history_bad_targets,
-
-    min(version) FILTER (
-        WHERE source = 'history'
-    ) AS first_bad_version,
-
-    max(version) FILTER (
-        WHERE source = 'history'
-    ) AS last_bad_version
-
-FROM bad
-GROUP BY
-    org_id,
-    dashboard_id,
-    dashboard_uid,
-    title
-ORDER BY org_id, dashboard_uid;
+        SELECT x.value
+        FROM jsonb_each(
+            CASE
+                WHEN jsonb_typeof(t.targets) = 'object'
+                THEN t.targets
+                ELSE '{}'::jsonb
+            END
+        ) AS x(key, value)
+    ) AS target
+    WHERE jsonb_typeof(target.item) = 'object'
+      AND target.item ? ''
+)
+ORDER BY d.org_id, d.uid;
 
 ROLLBACK;
