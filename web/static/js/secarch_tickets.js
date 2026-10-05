@@ -10,6 +10,7 @@ let statusFilter = "open"
 let selectedDepartments = new Set()
 let activeTicketNumber = ""
 let updateSubmitInFlight = false
+const expectedDateSavesInFlight = new Set()
 let refreshInFlight = false
 let currentSyncStatus = null
 let syncNetworkError = false
@@ -459,10 +460,9 @@ function populateTicketDetails(ticket) {
   const expectedInput = document.getElementById("detailExpectedDate")
   expectedInput.min = todayStr()
   expectedInput.value = dateOnly(ticket.expected_date)
-  expectedInput.disabled = isClosed
-  const expectedSubmit = document.getElementById("expectedDateSubmitBtn")
-  expectedSubmit.disabled = isClosed
-  expectedSubmit.classList.toggle("hidden", isClosed)
+  const expectedSaving = expectedDateSavesInFlight.has(ticket.ticket_number)
+  expectedInput.disabled = isClosed || expectedSaving
+  document.getElementById("expectedDateStatus").textContent = expectedSaving ? "Saving..." : ""
   showInlineError("expectedDateError", "")
   document.getElementById("detailReporter").textContent = ticket.reporter || "—"
   document.getElementById("detailAssignee").textContent = ticket.assignee || "—"
@@ -574,28 +574,50 @@ async function addTicketUpdate(event) {
   }
 }
 
-async function updateExpectedDate(event) {
-  event.preventDefault()
+async function updateExpectedDate() {
   const ticket = allData.find(item => item.ticket_number === activeTicketNumber)
   if (!ticket || ticket.ticket_closed_at) return
-  const expectedDate = document.getElementById("detailExpectedDate").value
+  const ticketNumber = ticket.ticket_number
+  if (expectedDateSavesInFlight.has(ticketNumber)) return
+  const expectedInput = document.getElementById("detailExpectedDate")
+  const expectedDate = expectedInput.value
   showInlineError("expectedDateError", "")
-  if (!expectedDate) return showInlineError("expectedDateError", "Expected date is required.")
-  setSubmitLoading("expectedDateSubmitBtn", true, "Saving...", "Save")
+  if (expectedDate === dateOnly(ticket.expected_date)) return
+  if (!expectedInput.checkValidity()) {
+    showInlineError("expectedDateError", expectedInput.validationMessage)
+    expectedInput.value = dateOnly(ticket.expected_date)
+    return
+  }
+  expectedDateSavesInFlight.add(ticketNumber)
+  expectedInput.disabled = true
+  document.getElementById("expectedDateStatus").textContent = "Saving..."
   try {
-    const response = await fetch(`/api/tickets/${encodeURIComponent(activeTicketNumber)}/expected-date`, {
+    const response = await fetch(`/api/tickets/${encodeURIComponent(ticketNumber)}/expected-date`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_date: expectedDate })
     })
     const body = await parseResponseBody(response)
-    if (!response.ok) return showInlineError("expectedDateError", responseMessage(body, "Failed to update date"))
-    ticket.expected_date = expectedDate
+    if (!response.ok) {
+      const message = responseMessage(body, "Failed to update date")
+      if (activeTicketNumber === ticketNumber) showInlineError("expectedDateError", message)
+      else showToast(message, "error")
+      return
+    }
+    const currentTicket = allData.find(item => item.ticket_number === ticketNumber) || ticket
+    currentTicket.expected_date = expectedDate
     render()
     showToast("Expected date updated", "success")
   } catch (error) {
     console.error(error)
-    showInlineError("expectedDateError", "Network error. Please try again.")
+    if (activeTicketNumber === ticketNumber) showInlineError("expectedDateError", "Network error. Please try again.")
+    else showToast("Network error. Please try again.", "error")
   } finally {
-    setSubmitLoading("expectedDateSubmitBtn", false, "Saving...", "Save")
+    expectedDateSavesInFlight.delete(ticketNumber)
+    if (activeTicketNumber === ticketNumber) {
+      const currentTicket = allData.find(item => item.ticket_number === ticketNumber) || ticket
+      expectedInput.value = dateOnly(currentTicket.expected_date)
+      expectedInput.disabled = Boolean(currentTicket.ticket_closed_at)
+      document.getElementById("expectedDateStatus").textContent = ""
+    }
   }
 }
 
@@ -823,7 +845,7 @@ document.getElementById("tbody").addEventListener("click", event => {
   event.preventDefault()
   openTicketDetails(button.dataset.ticket)
 })
-document.getElementById("expectedDateForm").addEventListener("submit", updateExpectedDate)
+document.getElementById("detailExpectedDate").addEventListener("change", updateExpectedDate)
 document.getElementById("updateSubmitBtn").addEventListener("click", addTicketUpdate)
 document.getElementById("updateContent").addEventListener("input", updateCharacterCounter)
 document.querySelectorAll("[data-close-modal]").forEach(button => {
