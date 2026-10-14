@@ -1,0 +1,26 @@
+for pod in fluent-bit-drpvt fluent-bit-fjdtk fluent-bit-xldjt; do
+  echo "========== $pod =========="
+
+  kubectl exec "$pod" -c fluent-bit -- sh -c '
+    CG_REL=$(sed -n "s/^0:://p" /proc/1/cgroup)
+    CG_DIR="/sys/fs/cgroup${CG_REL}"
+
+    echo "Cgroup: $CG_REL"
+    echo "Path: $CG_DIR"
+
+    if [ ! -r "$CG_DIR/memory.max" ]; then
+      echo "ERROR: Cannot resolve container cgroup"
+      exit 1
+    fi
+
+    echo "=== MEMORY LIMIT ==="
+    cat "$CG_DIR/memory.max"
+
+    echo "=== MEMORY CURRENT ==="
+    cat "$CG_DIR/memory.current"
+
+    echo "=== MEMORY STAT ==="
+    grep -E "^(anon|anon_thp|file|slab_reclaimable) " \
+      "$CG_DIR/memory.stat"
+  '
+done

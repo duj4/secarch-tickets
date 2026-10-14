@@ -1,0 +1,18 @@
+kubectl exec fluent-bit-drpvt -c fluent-bit -- awk '
+/^[0-9a-f]+-[0-9a-f]+ / {
+    if (thp > 0)
+        printf "%8.1f %8.1f %8.1f  %s\n",
+            thp/1024, anon/1024, rss/1024, mapping
+
+    mapping=$0
+    thp=anon=rss=0
+}
+/^AnonHugePages:/ { thp=$2 }
+/^Anonymous:/     { anon=$2 }
+/^Rss:/           { rss=$2 }
+END {
+    if (thp > 0)
+        printf "%8.1f %8.1f %8.1f  %s\n",
+            thp/1024, anon/1024, rss/1024, mapping
+}
+' /proc/1/smaps | sort -nr | head -20
