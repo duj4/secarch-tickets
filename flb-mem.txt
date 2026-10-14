@@ -1,0 +1,19 @@
+for pod in fluent-bit-drpvt fluent-bit-fjdtk fluent-bit-xldjt; do
+  echo "========== $pod =========="
+
+  kubectl exec "$pod" -c fluent-bit -- sh -c '
+    CG_REL=$(sed -n "s/^0:://p" /proc/1/cgroup)
+    CG_DIR="/sys/fs/cgroup${CG_REL}"
+
+    echo "=== PROCESS SMAPS ==="
+    grep -E "^(Rss|Pss|Anonymous|AnonHugePages|LazyFree|Private_Dirty):" \
+      /proc/1/smaps_rollup
+
+    echo "=== CGROUP MEMORY CURRENT ==="
+    cat "$CG_DIR/memory.current"
+
+    echo "=== CGROUP BREAKDOWN ==="
+    grep -E "^(anon|anon_thp|file|kernel|kernel_stack|pagetables|percpu|sock|shmem|slab|slab_reclaimable|slab_unreclaimable|file_mapped|active_file|inactive_file) " \
+      "$CG_DIR/memory.stat"
+  '
+done
