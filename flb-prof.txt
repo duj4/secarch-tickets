@@ -1,44 +1,21 @@
-env:
-  - name: POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
+for pod in fluent-bit-drpvt fluent-bit-fjdtk fluent-bit-xldjt; do
+  echo "========== $pod =========="
 
-  - name: MALLOC_CONF
-    value: "prof:true,prof_active:true,lg_prof_sample:19,lg_prof_interval:36,prof_gdump:false,prof_final:false,prof_accum:false,prof_prefix:/var/log/fluent-bit-heap-profiles/$(POD_NAME),confirm_conf:true"
+  kubectl logs "$pod" -c fluent-bit --timestamps --since=20m |
+    grep 'Allocated:' | tail -2
 
-NS=<your-namespace>
-POD=<your-fluent-bit-pod>
+  kubectl exec "$pod" -c fluent-bit -- sh -c '
+    date -u
 
-kubectl -n "$NS" exec "$POD" -c fluent-bit -- sh -c '
-  echo "===== USER ====="
-  id
+    echo "=== PROCESS ==="
+    grep -E "^(VmRSS|RssAnon|Threads):" /proc/1/status
 
-  echo "===== DISK ====="
-  df -h /var/log
+    echo "=== SMAPS ==="
+    grep -E "^(Anonymous|AnonHugePages|Private_Dirty):" \
+      /proc/1/smaps_rollup
 
-  echo "===== CREATE DIRECTORY ====="
-  mkdir -p /var/log/fluent-bit-heap-profiles
-  chmod 700 /var/log/fluent-bit-heap-profiles
-
-  echo "===== WRITE TEST ====="
-  touch /var/log/fluent-bit-heap-profiles/.write-test
-  ls -l /var/log/fluent-bit-heap-profiles/.write-test
-
-  rm /var/log/fluent-bit-heap-profiles/.write-test
-
-  echo "===== RESULT ====="
-  ls -ld /var/log/fluent-bit-heap-profiles
-'
-
-kubectl -n "$NS" exec "$POD" -c fluent-bit -- sh -c '
-  echo "===== PROFILE FILES ====="
-
-  find /var/log/fluent-bit-heap-profiles \
-    -type f -name "*.heap" \
-    | sort -V | tail -10
-
-  echo "===== DISK USAGE ====="
-
-  du -sh /var/log/fluent-bit-heap-profiles
-'
+    echo "=== CGROUP ==="
+    grep -E "^(anon|anon_thp|slab_reclaimable) " \
+      /sys/fs/cgroup/memory.stat
+  '
+done
