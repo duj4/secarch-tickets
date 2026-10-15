@@ -1,0 +1,31 @@
+(
+  [.items[]
+    | select(
+        .metadata.labels["advisor.grafana.app/type"]
+        == "datasource"
+      )
+  ]
+  | sort_by(.metadata.creationTimestamp)
+  | last
+) as $r
+| if $r == null
+     or ($r.status.report.failures | type) != "array"
+  then
+    error("No valid datasource Advisor report")
+  else
+    [{
+      datasource: "__advisor_check__",
+      datasource_url: "",
+      failed: 0
+    }]
+    +
+    [
+      $r.status.report.failures[]
+      | select(.stepID == "health-check")
+      | {
+          datasource: (.item // "unknown"),
+          datasource_url: (.links[0].url // ""),
+          failed: 1
+        }
+    ]
+  end
