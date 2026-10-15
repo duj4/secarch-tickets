@@ -1,0 +1,102 @@
+**Subject: Confirm supportability of OpenSearch Active / Lucene Cold Standby DR architecture in JSM 11.3.x**
+
+Hi Atlassian Support Team,
+
+We are currently evaluating our Disaster Recovery (DR) architecture as part of our planned upgrade to Jira Service Management Data Center 11.3.x and adoption of OpenSearch 3.5.0.
+
+Our objective is to simplify DR failover operations while maintaining an RTO of 60 minutes or less.
+
+**1. Current Production Architecture**
+
+We operate JSM Data Center across two data centers:
+
+**Primary DC (SHG):**
+- Two active JSM nodes (Node IDs 1 and 2).
+- Both nodes currently belong to the same JSM Data Center cluster.
+
+**Standby DC (BJV):**
+- One cold standby JSM node (Node ID 3).
+- The standby node remains shut down during normal operations.
+
+PostgreSQL and NAS data are continuously replicated between the two data centers.
+
+During DR failover, we stop or isolate the primary JSM nodes, complete the database and NAS failover, and start the standby JSM node.
+
+The standby node uses the same replicated JSM database and shared-home data. This architecture is already in place.
+
+**2. Proposed Architecture with OpenSearch**
+
+As part of our JSM 11.3.x upgrade, we plan to introduce OpenSearch 3.5.0.
+
+Our proposed configuration is:
+
+**Primary DC (SHG):**
+- JSM Node 1 and Node 2 configured with `search.platform=opensearch`.
+- Both nodes connected to a shared three-node OpenSearch cluster.
+
+**Standby DC (BJV):**
+- JSM Node 3 remains a cold standby.
+- Node 3 uses `search.platform=lucene`.
+- No OpenSearch deployment in the standby DC.
+
+In a DR scenario:
+
+1. The primary JSM nodes are stopped or isolated.
+2. PostgreSQL and NAS failover to BJV is completed.
+3. The standby JSM node starts using Lucene.
+4. The standby node rebuilds its Lucene search index from the recovered database if necessary.
+5. JSM becomes available after the required index recovery and validation.
+
+Only one data center would be active at any given time.
+
+We understand that Jira's search index can be recreated from the database, but we would like to confirm whether switching search platforms in this DR scenario is officially supported.
+
+**3. Questions for Atlassian**
+
+**Q1 — Supported configuration**
+
+Is it officially supported in JSM Data Center 11.3.x to use OpenSearch on the active nodes while maintaining a cold standby node configured with Lucene, provided the two search platforms are never actively serving the same cluster simultaneously?
+
+We understand that Jira supports mixed Lucene/OpenSearch nodes during the documented migration to OpenSearch. However, our scenario is the reverse direction and is intended for DR rather than migration.
+
+**Q2 — Cluster membership**
+
+Can the standby Lucene node retain its existing Data Center cluster membership and unique Node ID (Node 3)?
+
+Are there any cluster-level configurations, feature flags, index replication events, or database metadata that could prevent it from starting correctly after the active OpenSearch nodes have been stopped?
+
+**Q3 — Index recovery during DR**
+
+If the standby node has no valid local Lucene index or Lucene index snapshot, will JSM automatically perform a full Lucene re-index from the recovered PostgreSQL database during startup?
+
+Would `disaster.recovery=true` be sufficient to trigger the expected recovery behavior, or are additional settings or manual operations required?
+
+Are there any special considerations when the database was previously used by JSM nodes running OpenSearch?
+
+**Q4 — Search platform transition**
+
+Are there any known limitations or required procedures when switching from OpenSearch back to Lucene in JSM 11.3.x?
+
+In particular, should any existing search-related configuration, index metadata, or cluster state be reset before starting the standby node?
+
+**Q5 — DR failback**
+
+After operating on the Lucene standby node during a disaster, can we safely return to the primary JSM nodes using OpenSearch once PostgreSQL and NAS have been synchronized back?
+
+Would a full OpenSearch re-index be required, and is there an officially recommended failback procedure?
+
+**Q6 — QA validation**
+
+Our QA environment currently consists of three JSM 11.3.x nodes in one Data Center cluster, sharing a single PostgreSQL database. Two nodes use OpenSearch, and we would like to validate Lucene recovery on the third node.
+
+Would Atlassian recommend testing this by shutting down the two OpenSearch-backed Jira nodes and starting the remaining node with Lucene, or is a fully isolated database and shared-home copy required?
+
+**4. Requested Outcome**
+
+Could you please confirm whether this architecture is officially supported and, if so, provide the recommended configuration, startup recovery, and failback procedures?
+
+If it is not supported, please clarify the technical restrictions and recommend a supported DR approach that does not require continuous cross-DC OpenSearch index replication.
+
+Our main objective is to minimize operational complexity during a DR event while maintaining data integrity and a recovery time objective of 60 minutes or less.
+
+Thank you for your guidance.
