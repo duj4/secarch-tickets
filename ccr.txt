@@ -1,0 +1,29 @@
+curl -sS -X POST \
+  'https://opensearch-itsm-qa.srv.ms.com.cn:9200/ccr-itsm-qa/_bulk?refresh=wait_for' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
+  -H 'Content-Type: application/x-ndjson' \
+  --data-binary @- <<'EOF' | jq
+{"index":{"_id":"001"}}
+{"test":"CCR-Initial","message":"Document 001","version":1}
+{"index":{"_id":"002"}}
+{"test":"CCR-Initial","message":"Document 002","version":1}
+{"index":{"_id":"003"}}
+{"test":"CCR-Initial","message":"Document 003","version":1}
+EOF
+
+curl -sS \
+  'https://opensearch-itsm-qa.srv.ms.com.cn:9200/ccr-itsm-qa/_search?size=10' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
+  | jq '{
+      total: .hits.total.value,
+      documents: [.hits.hits[] | {
+        id: ._id,
+        source: ._source
+      }]
+    }'
+
+
