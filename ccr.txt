@@ -1,25 +1,22 @@
-curl -sS -o /dev/null -w 'HTTP %{http_code}\n' -I \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/ccr-itsm-qa' \
+curl -fsS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/ccr-itsm-qa/_search?size=10' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
   --cert itsm_opensearch_qa.pem \
-  --key itsm_opensearch_qa.key
+  --key itsm_opensearch_qa.key \
+  | jq '{
+      total: .hits.total.value,
+      documents: (
+        [.hits.hits[] | {
+          id: ._id,
+          source: ._source
+        }] | sort_by(.id)
+      )
+    }'
 
-curl -sS -w '\nHTTP %{http_code}\n' -X PUT \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_start?pretty' \
-  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
-  -u itsm_jsm_qa \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "leader_alias": "shg-qa-api",
-    "leader_index": "ccr-itsm-qa",
-    "use_roles": {
-      "leader_cluster_role": "ccr_leader",
-      "follower_cluster_role": "ccr_follower"
-    }
-  }'
-
-curl -sS \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_status?pretty&verbose=true' \
+curl -fsS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_cat/indices/ccr-itsm-qa?format=json&h=health,status,index,pri,rep,docs.count' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
   --cert itsm_opensearch_qa.pem \
   --key itsm_opensearch_qa.key | jq
+
+
