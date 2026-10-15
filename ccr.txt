@@ -1,21 +1,33 @@
-curl -sS -I \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/ccr-itsm-qa' \
-  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
-  --cert itsm_opensearch_qa.pem \
-  --key itsm_opensearch_qa.key
-
-curl -sS -w '\nHTTP %{http_code}\n' -X POST \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_stop?pretty' \
+curl -sS -w '\nHTTP %{http_code}\n' -X PUT \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_cluster/settings?pretty' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
   --cert itsm_opensearch_qa.pem \
   --key itsm_opensearch_qa.key \
   -H 'Content-Type: application/json' \
-  -d '{}'
+  -d '{
+    "persistent": {
+      "cluster.remote.shg-qa-api.mode": "sniff",
+      "cluster.remote.shg-qa-api.seeds": [
+        "vshgms649.linux.ms.com.cn:9300"
+      ]
+    }
+  }'
 
 curl -sS \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_status?pretty' \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_cluster/settings?flat_settings=true&pretty' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
   --cert itsm_opensearch_qa.pem \
-  --key itsm_opensearch_qa.key
+  --key itsm_opensearch_qa.key | jq
 
+curl -sS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_remote/info?pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
+  | jq 'with_entries(.value |= {
+      connected,
+      mode,
+      seeds,
+      num_nodes_connected
+    })'
 
