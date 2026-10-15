@@ -1,13 +1,21 @@
-curl -sS -w '\nHTTP %{http_code}\n' -X PUT \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_start?pretty' \
+curl -sS -I \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/ccr-itsm-qa' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
-  -u itsm_jsm_qa \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key
+
+curl -sS -w '\nHTTP %{http_code}\n' -X POST \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_stop?pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
   -H 'Content-Type: application/json' \
-  -d '{
-    "leader_alias": "opensearch-itsm-qa",
-    "leader_index": "ccr-itsm-qa",
-    "use_roles": {
-      "leader_cluster_role": "ccr_leader",
-      "follower_cluster_role": "ccr_follower"
-    }
-  }'
+  -d '{}'
+
+curl -sS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_status?pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key
+
+
