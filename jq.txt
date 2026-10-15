@@ -1,3 +1,4 @@
+
 (
   [.items[]
     | select(
@@ -7,25 +8,31 @@
   ]
   | sort_by(.metadata.creationTimestamp)
   | last
-) as $r
-| if $r == null
-     or ($r.status.report.failures | type) != "array"
+) as $report
+
+| if $report == null
+     or ($report.status.report.failures | type) != "array"
   then
-    error("No valid datasource Advisor report")
+    error("No valid Advisor datasource report")
   else
     [{
-      datasource: "__advisor_check__",
-      datasource_url: "",
+      item: "__advisor_check__",
+      itemID: "",
+      url: "",
+      moreInfo: "",
       failed: 0
     }]
     +
     [
-      $r.status.report.failures[]
+      $report.status.report.failures[]
       | select(.stepID == "health-check")
       | {
-          datasource: (.item // "unknown"),
-          datasource_url: (.links[0].url // ""),
+          item: (.item // "unknown"),
+          itemID: (.itemID // "unknown"),
+          url: (.links[0].url // ""),
+          moreInfo: (.moreInfo // ""),
           failed: 1
         }
     ]
   end
+
