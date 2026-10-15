@@ -1,3 +1,15 @@
+curl -fsS -X PUT \
+  'https://opensearch-itsm-qa.srv.ms.com.cn:9200/ccr-itsm-qa/_doc/004?refresh=wait_for&pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "test": "CCR-Continuous",
+    "message": "Document 004",
+    "version": 1
+  }'
+
 curl -fsS \
   'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/ccr-itsm-qa/_search?size=10' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
@@ -14,9 +26,15 @@ curl -fsS \
     }'
 
 curl -fsS \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_cat/indices/ccr-itsm-qa?format=json&h=health,status,index,pri,rep,docs.count' \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_status?pretty&verbose=true' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
   --cert itsm_opensearch_qa.pem \
-  --key itsm_opensearch_qa.key | jq
+  --key itsm_opensearch_qa.key \
+  | jq '{
+      status,
+      leader_alias,
+      syncing_details,
+      shard_replication_details
+    }'
 
 
