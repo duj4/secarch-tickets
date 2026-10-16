@@ -1,0 +1,111 @@
+
+flowchart LR
+    L["Linux Servers<br/>System Logs"]
+
+    subgraph EC["Existing EC Rsyslog Server"]
+        R["Rsyslog<br/>Existing UDP 514 Listener"]
+        F[("Linux Log Files<br/>30-Day Local Retention")]
+        FB["Fluent Bit<br/>Tail Input<br/>Offset DB + FS Buffer"]
+        P["Parsing & Enrichment<br/>Source Hostname"]
+        M{"Legal Entity<br/>Tenant Mapping"}
+
+        R -->|Write| F
+        F -->|Tail| FB
+        FB --> P
+        P --> M
+    end
+
+    S["Splunk<br/>Until Decommission"]
+
+    subgraph LAAS["LaaS Platform"]
+        T1[("Linux Loki Tenant A")]
+        T2[("Linux Loki Tenant B")]
+    end
+
+    ID["Dedicated Linux SystemID<br/>Multi-Tenant Write Permission"]
+    U["Unknown / Unauthorized<br/>No Forwarding + Alert"]
+
+    L -->|Existing Syslog| R
+    R -->|Existing Forwarding| S
+
+    M -->|Authorized Route A| T1
+    M -->|Authorized Route B| T2
+    M -.->|Unmapped| U
+    ID -.->|Authenticate Outputs| LAAS
+
+    classDef chosen fill:#e5f4eb,stroke:#278553,color:#174c30
+    class FB,P,M chosen
+
+
+flowchart LR
+    L["Linux Servers<br/>System Logs"]
+
+    subgraph EC["Existing EC Rsyslog Server"]
+        R["Rsyslog<br/>Existing UDP 514 Listener"]
+        F[("Existing Linux Log Files")]
+        Q["Additional Forwarding Action<br/>Queue + Retry"]
+        FB["Fluent Bit<br/>TCP/Syslog Input<br/>127.0.0.1:15140"]
+        P["Parsing + Legal Entity<br/>Tenant Mapping"]
+
+        R -->|Existing Write| F
+        R -->|New Forwarding Action| Q
+        Q -->|Local TCP| FB
+        FB --> P
+    end
+
+    S["Splunk<br/>Until Decommission"]
+    ID["Dedicated Linux SystemID"]
+
+    subgraph LAAS["LaaS Platform"]
+        T1[("Linux Loki Tenant A")]
+        T2[("Linux Loki Tenant B")]
+    end
+
+    L -->|Existing Syslog| R
+    R -->|Existing Forwarding| S
+    P -->|Tenant A| T1
+    P -->|Tenant B| T2
+    ID -.->|Authorized Write| LAAS
+
+    classDef alternative fill:#e8efff,stroke:#507bc8,color:#253f76
+    class Q,FB,P alternative
+
+
+flowchart LR
+    L["Linux Servers<br/>Client Syslog Configuration"]
+
+    subgraph EXIST["Existing Logging Infrastructure"]
+        R["Rsyslog Server"]
+        S["Splunk<br/>Until Decommission"]
+        R --> S
+    end
+
+    subgraph NEW["New Dedicated Logging Infrastructure"]
+        LB["Optional F5 / Load Balancer<br/>Syslog Listener Ports"]
+        FB1["Fluent Bit Server 1<br/>TCP/UDP/Syslog Input"]
+        FB2["Fluent Bit Server 2<br/>TCP/UDP/Syslog Input"]
+        P["Parsing + Legal Entity<br/>Tenant Mapping"]
+
+        LB -->|Load Balance| FB1
+        LB -->|Load Balance| FB2
+        FB1 --> P
+        FB2 --> P
+    end
+
+    subgraph LAAS["LaaS Platform"]
+        T1[("Linux Loki Tenant A")]
+        T2[("Linux Loki Tenant B")]
+    end
+
+    ID["Dedicated Linux SystemID"]
+
+    L -->|Existing Forwarding| R
+    L -->|Additional Client Forwarding| LB
+
+    P -->|Tenant A| T1
+    P -->|Tenant B| T2
+    ID -.->|Authorized Write| LAAS
+
+    classDef newinfra fill:#fff0dc,stroke:#d48b29,color:#805016
+    class LB,FB1,FB2 newinfra
+
