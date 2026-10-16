@@ -1,0 +1,19 @@
+curl -fsS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_status?pretty&verbose=true' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
+  | jq '{status,leader_alias,syncing_details}'
+
+curl -fsS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_remote/info?pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
+  | jq '."shg-qa-api" | {connected,mode,num_nodes_connected}'
+
+ip route get 10.17.133.55
+
+command -v nft
+command -v iptables
+
