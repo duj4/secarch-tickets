@@ -1,19 +1,40 @@
-curl -fsS \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_status?pretty&verbose=true' \
+curl -sS -w '\nHTTP %{http_code}\n' -X POST \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_stop?pretty' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
   --cert itsm_opensearch_qa.pem \
   --key itsm_opensearch_qa.key \
-  | jq '{status,leader_alias,syncing_details}'
+  -H 'Content-Type: application/json' \
+  -d '{}'
+
 
 curl -fsS \
-  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_remote/info?pretty' \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_plugins/_replication/ccr-itsm-qa/_status?pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key
+
+curl -fsS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/_cat/indices/ccr-itsm-qa?format=json' \
   --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
   --cert itsm_opensearch_qa.pem \
   --key itsm_opensearch_qa.key \
-  | jq '."shg-qa-api" | {connected,mode,num_nodes_connected}'
+  | jq '.[] | {health,status,index,"docs.count": ."docs.count"}'
 
-ip route get 10.17.133.55
+curl -sS -w '\nHTTP %{http_code}\n' -X PUT \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/ccr-itsm-qa/_create/dr-write-001?refresh=wait_for&pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "test": "CCR-DR",
+    "message": "BJV Follower is now writable",
+    "version": 1
+  }'
 
-command -v nft
-command -v iptables
 
+curl -fsS \
+  'https://opensearch-itsm-qa-dr.srv.ms.com.cn:9200/ccr-itsm-qa/_doc/dr-write-001?pretty' \
+  --cacert /etc/pki/ca-trust/source/anchors/katello-server-ca.pem \
+  --cert itsm_opensearch_qa.pem \
+  --key itsm_opensearch_qa.key
